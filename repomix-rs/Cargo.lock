@@ -886,7 +886,6 @@ dependencies = [
  "tree-sitter-swift",
  "tree-sitter-typescript",
  "unicode-width",
- "windows-sys",
 ]
 
 [[package]]

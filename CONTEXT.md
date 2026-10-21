@@ -82,9 +82,15 @@ C:\Users\ozett\Documents\Projects\Rustmix\
 ├─ bench.ps1                    # benchmark harness (Rust vs npx repomix)
 ├─ compare-all.ps1              # 26-case OUTPUT differential test vs npx repomix
 ├─ compare-metrics.ps1          # 8-case REPORT differential test (token counts!)
+├─ compare-flags.ps1            # 15-case differential test for the remaining flags
+├─ make-fixtures.ps1            # creates the fixture repositories the suites use
 ├─ CONTEXT.md                   # this file
 ├─ PROMPT.md                    # the prompt for the analysis model
-└─ testdata\                    # small fixture repo (incl. a unicode fixture)
+├─ testdata\                    # small fixture repo (incl. a unicode fixture)
+├─ testdata-git\                # git fixture (generated, not committed)
+├─ testdata-config\             # config file fixture
+├─ testdata-multi\              # two directories, for the multi root test
+└─ testdata-encoding\           # Latin-1, CRLF and BOM files
 ```
 
 ---
@@ -120,29 +126,29 @@ Corpus A = `C:\Users\ozett\AppData\Local\npm-cache\_npx\cad0f0e99bf115c9\node_mo
 
 | Implementation | Wall time | Notes |
 |---|---|---|
-| **repomix-rs** | **426 ms** | no cache, every run identical |
-| repomix (TS) | 2 453 ms | **with warm token-count disk cache** |
-| repomix (TS) | 5 182 ms | **cold token-count cache** (the honest "first run" number) |
+| **repomix-rs** | **407 ms** | no cache, every run identical |
+| repomix (TS) | 2 425 ms | **with warm token-count disk cache** |
+| repomix (TS) | 4 951 ms | **cold token-count cache** (the honest "first run" number) |
 
-> **Speedup: 5.8× (warm) / 12.2× (cold).** The project goal (10–30×) is met
+> **Speedup: 6.0× (warm) / 12.2× (cold).** The project goal (10–30×) is met
 > against the cold-cache comparison.
 
 ### Cold start
 
-`repomix.exe --version` → **7.0 – 7.7 ms** (best of 5). Target <15 ms: **met**.
+`repomix.exe --version` → **6.2 – 7.1 ms** (best of 5). Target <15 ms: **met**.
 
 ### Phase breakdown (Corpus A, single run, `REPOMIX_TIMING=1`)
 
 ```
-[timing]   walk=88ms match=19ms sort=4ms files=6907
-[timing] search                    93.4ms
-[timing] setup                     95.1ms
-[timing] read                     139.8ms
-[timing] security                 193.9ms
-[timing] process                  201.8ms
-[timing] sort                     205.6ms
-[timing] render                   217.3ms
-[timing] metrics                  217.4ms     <- skipped (--stdout)
+[timing]   walk=87ms match=19ms sort=4ms files=6907
+[timing] search                    99.0ms
+[timing] setup                    100.6ms
+[timing] read                     146.0ms
+[timing] security                 199.3ms
+[timing] process                  206.4ms
+[timing] sort                     209.9ms
+[timing] render                   222.3ms
+[timing] metrics                  222.4ms     <- skipped (--stdout)
 ```
 
 With the report enabled (metrics consumed) the metrics phase is **~1 050 ms**
@@ -154,7 +160,7 @@ With the report enabled (metrics consumed) the metrics phase is **~1 050 ms**
    6 907 files and ~2 500 directories). Parallelising the `ignore` crate's
    walker gave **no** improvement; this is the floor for a stat-based walk.
 2. **Reading — 45 ms.** `std::fs::read` on 6 907 files.
-3. **Secret scan — 54 ms** (parallel). Was 144 ms.
+3. **Secret scan — 54 ms** (parallel). Was 146 ms without a prefilter.
 4. **Render — 12 ms.** Was 93 ms.
 5. **Writing the 65 MB to stdout — ~175 ms.** A single `write_all`; the cost
    is the pipe transfer, and the TS pays it too.
@@ -162,6 +168,18 @@ With the report enabled (metrics consumed) the metrics phase is **~1 050 ms**
    - regex compilation of the security rules: **122 ms → 1.4 ms** (lazy
      compilation, §5).
    - BPE table build: 94 ms → hidden behind the file I/O.
+
+### 4.2 What was measured and rejected
+
+Four further optimisations were implemented and measured on Corpus A. Only
+the ones that paid off were kept:
+
+| Idea | Result |
+|---|---|
+| **Content de-duplication** in the token counting (group identical files, tokenise each body once) | **Rejected.** Only 6 % of the corpus bytes are duplicates (1 519 of 6 924 files, 5.1 MB of 84.9 MB), so hashing 85 MB would cost more than the ~60 ms it saves. |
+| **"All of" literals** for the basic-auth rule (`"://"` *and* `"@"`) | **Neutral** (53 ms vs 54 ms). Kept out - it made the literal set fragile (see §5.3). |
+| **`regex::RegexSet` instead of `aho-corasick`** for the prefilter | **Rejected.** The SIMD matcher is 2.7× faster on one large file (2.2 vs 0.83 GB/s), but a repository has many small files, and every set needs its own iterator: the security phase went from 54 ms to **84 ms** (8 sets) or **91 ms** (1 set). |
+| **Parallel directory walk** (`WalkBuilder::threads`) | **Rejected.** No measurable difference - the walk is syscall bound. |
 
 ### 4.1 Benchmark methodology (READ THIS — the harness was broken before)
 
@@ -207,11 +225,16 @@ differ, and `compare-all.ps1` starts every child with an explicit
 |---|---|---|
 | `compare-all.ps1` | the **packed output** (stdout, `--stdout` mode), 26 flag combinations | the output files |
 | `compare-metrics.ps1` | the **numbers in the console report**, 8 flag combinations | total/per-file token counts, char counts, file counts, security findings |
+| `compare-flags.ps1` | the **remaining flags**, 15 cases | git flags, `--instruction-file-path`, `--token-count-encoding`, `--config`, `--stdin`, `--split-output`, `--token-budget`, several target directories, odd file encodings, exit codes |
 
-**Both currently pass 26/26 and 8/8.** `compare-metrics.ps1` did not exist
-before: the old suite only compared stdout in `--stdout` mode, so the report
-— and with it the *entire* metrics phase — was never verified. It caught two
-real bugs (see §5.3).
+**All three currently pass 26/26, 8/8 and 15/15.** The last two suites did
+not exist before: the old suite only compared stdout in `--stdout` mode, so
+the report — and with it the *entire* metrics phase — was never verified, and
+15 flags were never compared at all. They caught five real bugs (see §5.3).
+
+The fixtures (`testdata-git/`, `testdata-config/`, `testdata-multi/`,
+`testdata-encoding/`) are generated by `make-fixtures.ps1`; the git fixture
+is a real repository and therefore not committed.
 
 ### 5.2 Load-bearing quirks
 
@@ -282,6 +305,17 @@ real bugs (see §5.3).
   the machine's locale (this machine is `en-SE` and uses U+252C; a normal
   en-US machine uses a comma, which is what the Rust implementation emits).
   `compare-metrics.ps1` compares the digits only.
+* **The git change counts are only used when the *working directory* is the
+  root of a work tree.** The reference checks for a `.git` entry in the
+  working directory and collects the counts there — it does not look at the
+  parent directories, although `git log` itself would find them. The diffs
+  and the log use `git rev-parse` instead and do work in a subdirectory.
+* **The path separators are normalised on every platform.** The reference
+  replaces the Windows separator with the POSIX one *unconditionally*
+  (`path.win32.sep` is a constant in Node) and then splits on the POSIX
+  separator, so a file name that contains a backslash is split into two
+  segments on Linux as well. The Rust implementation does the same, and
+  `util/path.rs::backslashes_are_split_like_the_reference` locks it in.
 
 ### 5.3 Bugs found and fixed while optimising (2026-10-21)
 
@@ -299,6 +333,27 @@ real bugs (see §5.3).
 * **`js_trim` trimmed `U+0085`**, which JavaScript's `String.prototype.trim`
   does not. The exact ECMAScript whitespace set is now used
   (`style_utils::is_js_whitespace`).
+* **The usage guidelines were missing a blank line** when an instruction file
+  was used without a header text: the reference builds the text from a
+  template with two conditional lines and trims the result, so the empty
+  header line survives the trim.
+* **With several target directories the file paths in the output were the
+  root relative paths** instead of the display paths, so they were missing
+  the root label ("alpha/one.txt" became "one.txt").
+* **`--stdin` was accepted but ignored** — the whole current directory was
+  packed instead of the files that were piped in. It now reads the paths from
+  stdin, drops the comments and empty lines, resolves and de-duplicates them,
+  and expands a directory into the files below it. **Known divergence:** on
+  Windows the reference packs *nothing* in this mode, because it builds the
+  include pattern from `path.relative()`, which returns a path with
+  backslashes there, and escapes the backslash into the glob pattern. The
+  Rust implementation packs the requested files.
+* **The files were sorted by their git change count outside a work tree**,
+  and the counts were collected in the target directory instead of the
+  working directory.
+* **The order of the files was not preserved while reading them**: zipping
+  two parallel iterators produces an iterator that is not *indexed*, and
+  collecting from it does not keep the order.
 
 ---
 
@@ -315,6 +370,12 @@ cd repomix-rs; cargo test --release
 # report differential: 8 flag combinations (token/char/file counts, security)
 .\compare-metrics.ps1 -Dir C:\Users\ozett\Documents\Projects\Rustmix\testdata `
                       -RustExe C:\Users\ozett\Documents\Projects\Rustmix\repomix-rs\target\release\repomix.exe
+
+# flag differential: 15 cases (git flags, --stdin, --split-output, ...)
+.\compare-flags.ps1 -RustExe C:\Users\ozett\Documents\Projects\Rustmix\repomix-rs\target\release\repomix.exe
+
+# the fixtures the suites need (the git fixture is a real repository)
+.\make-fixtures.ps1
 
 # benchmark (Rust vs npx). NOTE: npx must be invoked through cmd.exe.
 .\bench.ps1 -Target C:\Users\ozett\AppData\Local\npm-cache\_npx\cad0f0e99bf115c9\node_modules -Runs 3
@@ -343,7 +404,7 @@ clap 4.6 (derive)      ignore 0.4      globset 0.4      rayon 1.12
 tiktoken-rs 0.12       simdutf8 0.1    tree-sitter 0.27 + 17 grammars
 serde/serde_json/json5 regex 1.13      aho-corasick 1 (new: security prefilter)
 arboard 3.7            anyhow  thiserror  log 0.4  env_logger 0.11
-unicode-width 0.2      windows-sys 0.61
+unicode-width 0.2
 ```
 
 Release profile: `opt-level=3, lto="fat", codegen-units=1, panic="abort", strip=true`.
@@ -362,15 +423,18 @@ Avoid anything that would change observable behaviour.
   mean reimplementing `.gitignore` handling.
 * **`util/glob.rs` is a hand-written backtracking matcher.** It is correct for
   the cases that matter, but it is O(patterns × path segments) per file. It
-  now only accounts for 19 ms of the 93 ms search phase, so it is *not* worth
+  now only accounts for 19 ms of the 99 ms search phase, so it is *not* worth
   optimising further. `globset` cannot be swapped in blindly: its `**`
   semantics differ from picomatch's.
 * **The `aho-corasick` prefilter is a correctness-critical optimisation.** It
-  relies on every rule having a *necessary* literal. Two unit tests guard
+  relies on every rule having a *necessary* literal. Three unit tests guard
   this: `prefilter_never_hides_a_matching_rule` (for every rule and every
-  sample, a rule that matches must be in the prefilter's mask) and
-  `every_match_contains_one_of_its_literals`. **Any new rule must come with
-  a literal and a sample.**
+  sample, a rule that matches must be in the prefilter's mask),
+  `every_match_contains_one_of_its_literals` (every match contains one of the
+  rule's literals) and `no_literal_hides_another_one` (no literal may occur
+  inside another one - aho-corasick's leftmost-first semantics report the
+  *shortest* match and would hide the longer one). **Any new rule must come
+  with a literal and a sample.**
 * **The metrics phase is skipped when its result is not consumed**
   (`--stdout`, `--quiet`, no `--token-budget`). The library API keeps
   `Config::need_metrics = true` by default, so `pack()` still returns full
@@ -378,19 +442,22 @@ Avoid anything that would change observable behaviour.
 * `panic = "abort"` means any panic kills the process — there is no error
   recovery. Two panics were found and fixed in 2026-10-21; more may lurk.
 * `core/comments.rs` diverges from `strip-comments` in edge cases (accepted).
-* Windows-only so far; path handling is POSIX-normalised everywhere, but the
-  code has not been exercised on Linux/macOS.
+* **Portability: audited, but not exercised on another platform.** There is
+  no `cfg(windows)` or `cfg(unix)` code in the crate at all, every file and
+  process operation goes through the portable `std` API, and the dead
+  `windows-sys` dependency was removed. A full `cargo check --target
+  x86_64-unknown-linux-gnu` cannot run here: the tree-sitter grammars are
+  compiled from C and there is no Linux cross compiler (no WSL, no Docker).
+  The known runtime difference is the clipboard: `arboard` needs X11 or
+  Wayland on Linux, and the error is propagated like any other.
 * The `ignore` crate's `is_git_repository` probe was removed from the git
   helpers (it doubled the number of process spawns and `git log`/`git diff`
   fail in exactly the same situations).
 * **Not implemented: content de-duplication in the metrics phase.** A
   `node_modules` tree contains many identical files (`LICENSE`, repeated
-  `.d.ts`), and each copy is tokenised separately. Hashing the content
-  would cost roughly as much as it saves, so a *prefix* hash (length +
-  first/last 64 bytes) with a full `memcmp` verification would be needed.
-  It is only worth ~100–200 ms in the report mode, which is no longer the
-  critical path, and a hash collision would silently produce wrong token
-  counts. Deliberately left out.
+  `.d.ts`), and each copy is tokenised separately - but only 6 % of the bytes
+  are duplicates, so hashing the content would cost roughly as much as it
+  saves. Deliberately left out, see §4.2.
 
 ---
 

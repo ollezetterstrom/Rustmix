@@ -1035,6 +1035,31 @@ mod tests {
         }
     }
 
+    /// No literal of the automaton may occur inside another one.
+    ///
+    /// Aho-corasick's default leftmost-first semantics report the *shortest*
+    /// match and hide every longer pattern that contains it. So a literal
+    /// that occurs inside another literal would make the longer one
+    /// invisible - and with it the rule that needs it.
+    #[test]
+    fn no_literal_hides_another_one() {
+        let mut literals: Vec<&str> = Vec::new();
+        for rule in rules() {
+            for literal in rule.literals {
+                if !literals.contains(&literal) {
+                    literals.push(literal);
+                }
+            }
+        }
+        for a in &literals {
+            for b in &literals {
+                if a != b && b.contains(*a) {
+                    panic!("the literal {b:?} contains {a:?} - the shorter one would hide it");
+                }
+            }
+        }
+    }
+
     /// Every match of a rule has to contain one of the rule's literals.
     ///
     /// This is the property the prefilter relies on: if a literal is missing

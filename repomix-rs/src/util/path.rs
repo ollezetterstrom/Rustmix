@@ -137,6 +137,21 @@ mod tests {
         assert_eq!(to_posix("src/main.rs"), "src/main.rs");
     }
 
+    /// The reference implementation replaces the Windows separator with the
+    /// POSIX one *unconditionally* - on every platform, because
+    /// `path.win32.sep` is a constant in Node - and splits the path on the
+    /// POSIX separator. A file name that contains a backslash is therefore
+    /// split into two segments on Linux as well, and this implementation has
+    /// to do the same to stay byte compatible.
+    #[test]
+    fn backslashes_are_split_like_the_reference() {
+        // The reference replaces the backslash first and then splits on the
+        // slash, so every backslash becomes a separator.
+        assert_eq!(split_segments("a\\b/c"), vec!["a", "b", "c"]);
+        assert_eq!(split_segments("a/b\\c"), vec!["a", "b", "c"]);
+        assert_eq!(to_posix("a\\b\\c"), "a/b/c");
+    }
+
     #[test]
     fn files_sort_after_their_directories() {
         let mut v = vec![
