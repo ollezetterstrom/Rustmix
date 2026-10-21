@@ -24,15 +24,18 @@ try {
   git config user.name "Repomix Fixture"
   git config user.email "fixture@example.com"
   git config commit.gpgsign false
-  git add -A
+  # Keep the line endings exactly as they are, so that the fixture is
+  # reproducible and git does not warn about the conversions.
+  git config core.autocrlf false
+  git add -A 2>&1 | Out-Null
   $env:GIT_AUTHOR_DATE = "2024-01-02T03:04:05+00:00"
   $env:GIT_COMMITTER_DATE = "2024-01-02T03:04:05+00:00"
-  git commit -q -m "Initial fixture commit"
+  git commit -q -m "Initial fixture commit" 2>&1 | Out-Null
   Remove-Item Env:\GIT_AUTHOR_DATE, Env:\GIT_COMMITTER_DATE
   # An unstaged modification and a staged one, plus an untracked file.
   [System.IO.File]::WriteAllText("$gitDir\modified.txt", "changed in the working tree`n", $utf8)
   [System.IO.File]::WriteAllText("$gitDir\staged.txt", "changed and staged`n", $utf8)
-  git add staged.txt
+  git add staged.txt 2>&1 | Out-Null
   [System.IO.File]::WriteAllText("$gitDir\untracked.txt", "not tracked at all`n", $utf8)
 } finally { Pop-Location }
 
