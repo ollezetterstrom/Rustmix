@@ -1,0 +1,14 @@
+# Scratch space for the differential test suites and manual experiments.
+/work/
+
+# Build artifacts
+/repomix-rs/target/
+
+# Generated output
+repomix-output.xml
+repomix-output.*
+/testdata/repomix-output.xml
+/testdata/metrics-out.xml
+
+# Generated bundle (rebuild with build-bundle.ps1)
+/repomix-rs-SOURCE.md
