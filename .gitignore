@@ -1,6 +1,10 @@
 # Scratch space for the differential test suites and manual experiments.
 /work/
 
+# The git fixture is a real repository, so it cannot be committed as part of
+# this repository. make-fixtures.ps1 creates it.
+/testdata-git/
+
 # Build artifacts
 /repomix-rs/target/
 

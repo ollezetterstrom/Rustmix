@@ -78,6 +78,11 @@ pub struct Config {
     /// expensive part of a run. Library users keep the full metrics unless
     /// they opt out explicitly.
     pub need_metrics: bool,
+    /// The file paths read from stdin (`--stdin`).
+    ///
+    /// When this is set, the directory walk is replaced by this explicit
+    /// list of files.
+    pub stdin_file_paths: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +133,7 @@ impl Default for Config {
             security_check_enabled: true,
             token_encoding: TokenEncoding::O200kBase,
             need_metrics: true,
+            stdin_file_paths: None,
         }
     }
 }

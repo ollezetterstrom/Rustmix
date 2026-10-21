@@ -77,9 +77,13 @@ pub fn pack(
     // The git change counts are only needed in the sort phase, but computing
     // them costs a `git log` process spawn. Start it right away so that it
     // runs while the files are being searched and read.
-    let git_root = root_dirs.first().cloned().unwrap_or_else(|| PathBuf::from("."));
-    let change_counts_handle = if cfg.output.git.sort_by_changes {
-        let dir = git_root.clone();
+    //
+    // The reference implementation only sorts by change count when the
+    // working directory is itself the root of a work tree, and it collects
+    // the counts in the working directory - not in the target directory.
+    let sort_by_changes = cfg.output.git.sort_by_changes && git::is_work_tree_root(&cfg.cwd);
+    let change_counts_handle = if sort_by_changes {
+        let dir = cfg.cwd.clone();
         let max_commits = cfg.output.git.sort_by_changes_max_commits;
         Some(std::thread::spawn(move || {
             git::get_change_counts(&dir, max_commits)
@@ -88,10 +92,17 @@ pub fn pack(
         None
     };
 
-    let search_results: Vec<search::SearchOutcome> = root_dirs
-        .par_iter()
-        .map(|root| search::search_files(root, cfg))
-        .collect::<Result<Vec<_>>>()?;
+    let search_results: Vec<search::SearchOutcome> = if let Some(files) = &cfg.stdin_file_paths {
+        // The `--stdin` mode: the file paths read from stdin replace the
+        // directory walk. The root is the current directory.
+        let root = root_dirs.first().cloned().unwrap_or_else(|| PathBuf::from("."));
+        vec![search::search_explicit_files(&root, cfg, files)?]
+    } else {
+        root_dirs
+            .par_iter()
+            .map(|root| search::search_files(root, cfg))
+            .collect::<Result<Vec<_>>>()?
+    };
 
     let file_path_style = cfg.output.file_path_style;
     let uses_root_labels = matches!(
@@ -163,10 +174,22 @@ pub fn pack(
     let mut skipped_files: Vec<SkippedFile> = Vec::new();
     for root_files in &root_files {
         let root = &root_files.root_dir;
-        let collected: Vec<RawFile> = root_files
+        // The file is read from `root.join(rel)`, but it is recorded with
+        // its *display* path - with several root directories that path is
+        // prefixed with the root label ("alpha/one.txt"), and the reference
+        // implementation uses the display path in the output as well.
+        //
+        // The pairs are collected first: `par_iter().zip()` is not an
+        // *indexed* parallel iterator, and collecting from one does not
+        // preserve the order of the files.
+        let pairs: Vec<(&String, &String)> = root_files
             .file_paths
+            .iter()
+            .zip(root_files.display_paths.iter())
+            .collect();
+        let collected: Vec<RawFile> = pairs
             .par_iter()
-            .map(|rel| read::read_raw_file(&root.join(rel), rel, cfg.max_file_size))
+            .map(|(rel, display)| read::read_raw_file(&root.join(rel), display, cfg.max_file_size))
             .collect();
         for file in collected {
             match (&file.content, file.skipped) {
@@ -234,7 +257,7 @@ pub fn pack(
     phase!("process");
     // --- Sort by git change frequency ------------------------------------
     let mut processed = processed;
-    if cfg.output.git.sort_by_changes {
+    if sort_by_changes {
         let counts = change_counts_handle
             .and_then(|handle| handle.join().ok())
             .unwrap_or_default();

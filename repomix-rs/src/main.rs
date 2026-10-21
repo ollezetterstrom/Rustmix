@@ -35,8 +35,52 @@ fn main() {
     }
 }
 
-fn run(cli: Cli) -> Result<i32> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+/// Read the file paths from stdin (the `--stdin` mode).
+///
+/// The lines are trimmed, empty lines and comments (starting with `#`) are
+/// dropped, and the remaining paths are resolved against the current
+/// directory and de-duplicated.
+fn read_stdin_paths(cwd: &std::path::Path) -> Result<Vec<PathBuf>> {
+    use std::io::{BufRead, IsTerminal};
+
+    if std::io::stdin().is_terminal() {
+        bail!("No data provided via stdin. Please pipe file paths to repomix when using --stdin flag.");
+    }
+
+    let stdin = std::io::stdin();
+    let mut lines: Vec<String> = Vec::new();
+    for line in stdin.lock().lines() {
+        lines.push(line?);
+    }
+
+    let valid: Vec<&str> = lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    if valid.is_empty() {
+        bail!("No valid file paths found in stdin input.");
+    }
+
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut out: Vec<PathBuf> = Vec::new();
+    for line in valid {
+        let path = std::path::Path::new(line);
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            cwd.join(path)
+        };
+        // Normalize the path, so that the same file is not packed twice.
+        let normalized = packager::resolve_path(&resolved);
+        if seen.insert(normalized.clone()) {
+            out.push(normalized);
+        }
+    }
+    Ok(out)
+}
+
+fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     // Load the configuration file (if any).
     let config_path = config::find_config_file(&cwd, cli.config.as_deref());
@@ -66,6 +110,17 @@ fn run(cli: Cli) -> Result<i32> {
         .collect();
     if root_dirs.is_empty() {
         bail!("No target directory specified");
+    }
+
+    // The `--stdin` mode reads the file paths from stdin instead of walking
+    // the target directory.
+    let mut cfg = cfg;
+    if cli.stdin {
+        let first_dir = cli.directories.first().map(|s| s.as_str()).unwrap_or(".");
+        if cli.directories.len() > 1 || first_dir != "." {
+            bail!("When using --stdin, do not specify directory arguments. File paths will be read from stdin.");
+        }
+        cfg.stdin_file_paths = Some(read_stdin_paths(&cwd)?);
     }
 
     let mut progress = |message: &str| {

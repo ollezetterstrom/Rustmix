@@ -400,6 +400,72 @@ fn is_empty_directory(root: &Path, rel: &str) -> bool {
     }
 }
 
+/// Collect an explicit list of files instead of walking the tree.
+///
+/// This is what the `--stdin` mode does: the file paths read from stdin
+/// replace the directory walk. The normal ignore rules still apply, and
+/// without a user supplied `--include` pattern only the listed files are
+/// packed.
+pub fn search_explicit_files(
+    root: &Path,
+    cfg: &Config,
+    explicit_files: &[PathBuf],
+) -> Result<SearchOutcome> {
+    let matchers = build_matchers(root, cfg);
+    let user_has_include = !cfg.include.is_empty();
+    let mut file_paths: Vec<String> = Vec::with_capacity(explicit_files.len());
+
+    for file in explicit_files {
+        // A directory is expanded into the files below it, like the
+        // reference implementation does.
+        if file.is_dir() {
+            let Ok(rel_dir) = relative_posix(root, file) else {
+                continue;
+            };
+            if let Ok(found) = search_files(file, cfg) {
+                for rel in found.file_paths {
+                    let joined = if rel_dir.is_empty() {
+                        rel
+                    } else {
+                        format!("{rel_dir}/{rel}")
+                    };
+                    if !matchers.is_ignored(&joined) {
+                        file_paths.push(joined);
+                    }
+                }
+            }
+            continue;
+        }
+
+        let Ok(rel) = relative_posix(root, file) else {
+            continue;
+        };
+        // A file outside of the root directory is not part of the pack.
+        if rel.is_empty() || rel.starts_with("..") {
+            continue;
+        }
+        if matchers.is_ignored(&rel) {
+            continue;
+        }
+        // The listed files are always included; a user supplied include
+        // pattern adds to them (the reference implementation merges the two
+        // lists of patterns).
+        if !user_has_include && !matchers.is_included(&rel) {
+            continue;
+        }
+        file_paths.push(rel);
+    }
+
+    file_paths.sort();
+    file_paths.dedup();
+    sort_paths(&mut file_paths);
+
+    Ok(SearchOutcome {
+        file_paths,
+        empty_dir_paths: Vec::new(),
+    })
+}
+
 /// Compute a root relative, POSIX separated path.
 fn relative_posix(root: &Path, path: &Path) -> Result<String, ()> {
     let rel = path.strip_prefix(root).map_err(|_| ())?;

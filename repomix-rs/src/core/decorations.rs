@@ -119,21 +119,37 @@ pub fn generate_summary_file_format() -> String {
 
 /// The usage guidelines section.
 pub fn generate_summary_usage_guidelines(cfg: &Config, has_instruction: bool) -> String {
-    let mut lines: Vec<&str> = vec![
-        "- This file should be treated as read-only. Any changes should be made to the",
-        "  original repository files, not this packed version.",
-        "- When processing this file, use the file path to distinguish",
-        "  between different files in the repository.",
-        "- Be aware that this file may contain sensitive information. Handle it with",
-        "  the same level of security as you would the original repository.",
-    ];
-    if cfg.output.header_text.is_some() {
-        lines.push("- Pay special attention to the Repository Description. These contain important context and guidelines specific to this project.");
-    }
-    if has_instruction {
-        lines.push("- Pay special attention to the Repository Instruction. These contain important context and guidelines specific to this project.");
-    }
-    lines.join("\n")
+    // The reference implementation builds the text from a template with two
+    // conditional lines and then trims the result:
+    //
+    //     `\n<lines>\n${headerText ? A : ''}\n${instruction ? B : ''}\n`.trim()
+    //
+    // Both conditional lines are always present, so with an instruction but
+    // without a header text the empty header line survives the trim and
+    // leaves a blank line between the guidelines and the instruction note.
+    let header_line = if cfg.output.header_text.is_some() {
+        "- Pay special attention to the Repository Description. These contain important context and guidelines specific to this project."
+    } else {
+        ""
+    };
+    let instruction_line = if has_instruction {
+        "- Pay special attention to the Repository Instruction. These contain important context and guidelines specific to this project."
+    } else {
+        ""
+    };
+
+    let text = format!(
+        "\n\
+         - This file should be treated as read-only. Any changes should be made to the\n\
+         \x20 original repository files, not this packed version.\n\
+         - When processing this file, use the file path to distinguish\n\
+         \x20 between different files in the repository.\n\
+         - Be aware that this file may contain sensitive information. Handle it with\n\
+         \x20 the same level of security as you would the original repository.\n\
+         {header_line}\n\
+         {instruction_line}\n"
+    );
+    crate::output::style_utils::js_trim(&text).to_string()
 }
 
 /// The notes section.

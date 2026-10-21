@@ -61,6 +61,16 @@ pub fn is_git_repository(dir: &Path) -> bool {
     }
 }
 
+/// Does `dir` contain a `.git` entry?
+///
+/// The reference implementation only uses the change counts when the
+/// *working directory* itself is the root of a work tree - it does not look
+/// at the parent directories. `git log` on the other hand finds the parent
+/// repository, so the two have to be distinguished.
+pub fn is_work_tree_root(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
 /// Collect the working tree and staged diffs.
 pub fn get_diffs(dir: &Path) -> GitDiffResult {
     // No `rev-parse` probe: `git diff` fails in the same way outside a work
