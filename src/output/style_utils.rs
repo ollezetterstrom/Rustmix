@@ -1,0 +1,210 @@
+//! Helpers shared by the output formatters.
+
+/// Map a file extension to the language name used in markdown code fences.
+const EXTENSION_TO_LANGUAGE: &[(&str, &str)] = &[
+    ("js", "javascript"),
+    ("mjs", "javascript"),
+    ("cjs", "javascript"),
+    ("jsx", "javascript"),
+    ("ts", "typescript"),
+    ("mts", "typescript"),
+    ("cts", "typescript"),
+    ("tsx", "typescript"),
+    ("vue", "vue"),
+    ("svelte", "svelte"),
+    ("astro", "astro"),
+    ("py", "python"),
+    ("pyw", "python"),
+    ("pyi", "python"),
+    ("rb", "ruby"),
+    ("erb", "erb"),
+    ("java", "java"),
+    ("kt", "kotlin"),
+    ("kts", "kotlin"),
+    ("scala", "scala"),
+    ("groovy", "groovy"),
+    ("clj", "clojure"),
+    ("cljs", "clojure"),
+    ("cljc", "clojure"),
+    ("c", "c"),
+    ("h", "c"),
+    ("cpp", "cpp"),
+    ("cc", "cpp"),
+    ("cxx", "cpp"),
+    ("hpp", "cpp"),
+    ("hxx", "cpp"),
+    ("m", "objectivec"),
+    ("mm", "objectivec"),
+    ("cs", "csharp"),
+    ("fs", "fsharp"),
+    ("fsx", "fsharp"),
+    ("fsi", "fsharp"),
+    ("vb", "vb"),
+    ("cshtml", "razor"),
+    ("razor", "razor"),
+    ("go", "go"),
+    ("rs", "rust"),
+    ("swift", "swift"),
+    ("php", "php"),
+    ("dart", "dart"),
+    ("haml", "haml"),
+    ("slim", "slim"),
+    ("hs", "haskell"),
+    ("lhs", "haskell"),
+    ("ex", "elixir"),
+    ("exs", "elixir"),
+    ("erl", "erlang"),
+    ("hrl", "erlang"),
+    ("ml", "ocaml"),
+    ("mli", "ocaml"),
+    ("elm", "elm"),
+    ("r", "r"),
+    ("jl", "julia"),
+    ("nim", "nim"),
+    ("zig", "zig"),
+    ("v", "v"),
+    ("lua", "lua"),
+    ("pl", "perl"),
+    ("pm", "perl"),
+    ("raku", "raku"),
+    ("sh", "bash"),
+    ("bash", "bash"),
+    ("zsh", "zsh"),
+    ("fish", "fish"),
+    ("ps1", "powershell"),
+    ("psm1", "powershell"),
+    ("bat", "batch"),
+    ("cmd", "batch"),
+    ("awk", "awk"),
+    ("html", "html"),
+    ("htm", "html"),
+    ("xhtml", "html"),
+    ("css", "css"),
+    ("scss", "scss"),
+    ("sass", "sass"),
+    ("less", "less"),
+    ("styl", "stylus"),
+    ("json", "json"),
+    ("json5", "json5"),
+    ("jsonc", "json"),
+    ("xml", "xml"),
+    ("xsl", "xml"),
+    ("xslt", "xml"),
+    ("svg", "xml"),
+    ("yaml", "yaml"),
+    ("yml", "yaml"),
+    ("toml", "toml"),
+    ("ini", "ini"),
+    ("cfg", "ini"),
+    ("conf", "ini"),
+    ("md", "markdown"),
+    ("mdx", "markdown"),
+    ("rst", "rst"),
+    ("tex", "latex"),
+    ("latex", "latex"),
+    ("sql", "sql"),
+    ("prisma", "prisma"),
+    ("dockerfile", "dockerfile"),
+    ("tf", "hcl"),
+    ("tfvars", "hcl"),
+    ("hcl", "hcl"),
+    ("nix", "nix"),
+    ("nginx", "nginx"),
+    ("apacheconf", "apacheconf"),
+    ("cmake", "cmake"),
+    ("makefile", "makefile"),
+    ("mk", "makefile"),
+    ("glsl", "glsl"),
+    ("vert", "glsl"),
+    ("frag", "glsl"),
+    ("wgsl", "wgsl"),
+    ("hlsl", "hlsl"),
+    ("vhdl", "vhdl"),
+    ("vhd", "vhdl"),
+    ("sol", "solidity"),
+    ("asm", "asm"),
+    ("s", "asm"),
+    ("hbs", "handlebars"),
+    ("handlebars", "handlebars"),
+    ("mustache", "handlebars"),
+    ("ejs", "ejs"),
+    ("jinja", "jinja"),
+    ("jinja2", "jinja"),
+    ("j2", "jinja"),
+    ("liquid", "liquid"),
+    ("njk", "nunjucks"),
+    ("pug", "pug"),
+    ("jade", "pug"),
+    ("twig", "twig"),
+    ("graphql", "graphql"),
+    ("gql", "graphql"),
+    ("proto", "protobuf"),
+    ("coffee", "coffeescript"),
+    ("vim", "vim"),
+    ("diff", "diff"),
+    ("patch", "diff"),
+    ("wasm", "wasm"),
+    ("wat", "wasm"),
+];
+
+/// The language name for a file path (used for markdown code fences).
+pub fn language_from_file_path(file_path: &str) -> &'static str {
+    let basename = file_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(file_path);
+    let Some(ext) = basename.rsplit('.').next() else {
+        return "";
+    };
+    if basename == ext {
+        // No dot in the name.
+        return "";
+    }
+    let ext = ext.to_ascii_lowercase();
+    EXTENSION_TO_LANGUAGE
+        .iter()
+        .find(|(k, _)| *k == ext)
+        .map(|(_, v)| *v)
+        .unwrap_or("")
+}
+
+/// Escape text for inclusion in XML.
+pub fn escape_xml(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Trim the way JavaScript's `String.prototype.trim` does.
+///
+/// JavaScript trims all Unicode whitespace, which includes `U+FEFF`.
+pub fn js_trim(text: &str) -> &str {
+    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_extensions() {
+        assert_eq!(language_from_file_path("src/main.rs"), "rust");
+        assert_eq!(language_from_file_path("a/b/c.ts"), "typescript");
+        assert_eq!(language_from_file_path("Makefile"), "");
+        assert_eq!(language_from_file_path("weird.xyz"), "");
+    }
+
+    #[test]
+    fn escapes_xml() {
+        assert_eq!(escape_xml("a & b < c"), "a &amp; b &lt; c");
+    }
+}
