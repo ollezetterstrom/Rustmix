@@ -9,8 +9,12 @@ use super::style_utils::escape_xml;
 use super::RenderContext;
 
 /// Render the default (Handlebars style) XML output.
-pub fn render(ctx: &RenderContext) -> String {
-    let mut out = String::new();
+pub fn render(ctx: &RenderContext<'_>) -> String {
+    let mut out = String::with_capacity(super::style_utils::estimate_output_size(
+        ctx.processed_files,
+        &ctx.tree_string,
+        ctx.git_diff_work_tree.len() + ctx.git_diff_staged.len(),
+    ));
 
     out.push('\n');
 
@@ -45,7 +49,7 @@ pub fn render(ctx: &RenderContext) -> String {
 
     if ctx.files_enabled {
         out.push_str("<files>\nThis section contains the contents of the repository's files.\n\n");
-        for file in &ctx.processed_files {
+        for file in ctx.processed_files {
             out.push_str("<file path=\"");
             out.push_str(&file.path);
             out.push_str("\">\n");
@@ -94,12 +98,16 @@ pub fn render(ctx: &RenderContext) -> String {
         }
     }
 
-    format!("{}\n", super::style_utils::js_trim(&out))
+    super::style_utils::finalize_trimmed_output(out)
 }
 
 /// Render the "parsable" XML output (built the way `fast-xml-builder` does).
-pub fn render_parsable(ctx: &RenderContext) -> String {
-    let mut out = String::new();
+pub fn render_parsable(ctx: &RenderContext<'_>) -> String {
+    let mut out = String::with_capacity(super::style_utils::estimate_output_size(
+        ctx.processed_files,
+        &ctx.tree_string,
+        ctx.git_diff_work_tree.len() + ctx.git_diff_staged.len(),
+    ));
     out.push_str("<repomix>");
     if ctx.file_summary_enabled {
         out.push_str("<file_summary>");
@@ -134,7 +142,7 @@ pub fn render_parsable(ctx: &RenderContext) -> String {
     if ctx.files_enabled {
         out.push_str("<files>");
         out.push_str("This section contains the contents of the repository&apos;s files.");
-        for file in &ctx.processed_files {
+        for file in ctx.processed_files {
             out.push_str("<file path=\"");
             out.push_str(&escape_xml(&file.path));
             out.push_str("\">");

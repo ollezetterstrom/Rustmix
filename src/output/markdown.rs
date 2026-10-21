@@ -4,8 +4,12 @@ use super::style_utils::language_from_file_path;
 use super::RenderContext;
 
 /// Render the markdown output.
-pub fn render(ctx: &RenderContext) -> String {
-    let mut out = String::new();
+pub fn render(ctx: &RenderContext<'_>) -> String {
+    let mut out = String::with_capacity(super::style_utils::estimate_output_size(
+        ctx.processed_files,
+        &ctx.tree_string,
+        ctx.git_diff_work_tree.len() + ctx.git_diff_staged.len(),
+    ));
     let delim = &ctx.markdown_code_block_delimiter;
 
     out.push('\n');
@@ -45,7 +49,7 @@ pub fn render(ctx: &RenderContext) -> String {
 
     if ctx.files_enabled {
         out.push_str("# Files\n\n");
-        for file in &ctx.processed_files {
+        for file in ctx.processed_files {
             out.push_str("## File: ");
             out.push_str(&file.path);
             out.push('\n');
@@ -106,5 +110,5 @@ pub fn render(ctx: &RenderContext) -> String {
         }
     }
 
-    format!("{}\n", super::style_utils::js_trim(&out))
+    super::style_utils::finalize_trimmed_output(out)
 }

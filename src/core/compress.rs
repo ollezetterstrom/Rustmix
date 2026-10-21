@@ -871,16 +871,26 @@ fn ts_function_name(line: &str) -> Option<String> {
     let bytes = line.as_bytes();
     let mut i = 0usize;
     // Optional "export".
-    let rest = if line[8..].trim_start().starts_with("const")
-        || line[8..].trim_start().starts_with("let")
-        || line[8..].trim_start().starts_with("var")
-    {
-        if !line[..8].trim().is_empty() {
-            return None;
+    //
+    // NOTE: `line[8..]` would panic for lines shorter than eight bytes or
+    // for lines whose eighth byte is inside a multi byte character, so the
+    // slice is taken with `get()`.
+    let rest = match line.get(8..) {
+        Some(tail) => {
+            let trimmed = tail.trim_start();
+            if trimmed.starts_with("const")
+                || trimmed.starts_with("let")
+                || trimmed.starts_with("var")
+            {
+                if !line[..8].trim().is_empty() {
+                    return None;
+                }
+                tail
+            } else {
+                line
+            }
         }
-        &line[8..]
-    } else {
-        line
+        None => line,
     };
     let _ = bytes;
     let trimmed = rest.trim_start();
@@ -1093,7 +1103,7 @@ fn python_decorators(lines: &[&str], start_row: usize) -> Vec<String> {
 }
 
 fn python_class_line(line: &str) -> String {
-    // `class\s+\w+\s*\((.*?)\):` â€” the result is the same either way, the
+    // `class\s+\w+\s*\((.*?)\):` - the result is the same either way, the
     // trailing colon is simply removed.
     strip_trailing_colon(line)
 }
@@ -1426,6 +1436,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn probe_short_lines() {
+        for line in ["", "}", "x", "  y", "let z"] {
+            let _ = ts_function_name(line);
+        }
+    }
+
+    /// Lines shorter than eight bytes, or lines whose eighth byte falls into
+    /// a multi byte character, used to panic.
+    #[test]
+    fn short_and_multibyte_lines_do_not_panic() {
+        for line in [
+            "",
+            "}",
+            "x",
+            "  y",
+            "let z",
+            "}",
+            "  });",
+            "ééééééé",
+            "éééééééé",
+            "        const foo = 1;",
+            "  const foo = 1;",
+            "const foo = 1;",
+        ] {
+            let _ = ts_function_name(line);
+        }
+    }
+
+    #[test]
     fn guesses_language() {
         assert_eq!(Language::guess("src/main.rs"), Some(Language::Rust));
         assert_eq!(Language::guess("a/b.ts"), Some(Language::TypeScript));
@@ -1437,7 +1476,9 @@ mod tests {
         let code = "use std::fs;\n\n/// Doc\nfn main() {\n    println!(\"hi\");\n}\n";
         let out = compress_with_language(Language::Rust, code).unwrap();
         assert!(out.contains("use std::fs;"));
-        assert!(!out.contains("println!"));
+        // The function body is reduced to its signature line.
+        assert!(out.contains("fn main() {"));
+        assert!(!out.contains("    println!"));
     }
 
     #[test]

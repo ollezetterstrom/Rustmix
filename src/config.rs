@@ -70,6 +70,14 @@ pub struct Config {
     pub ignore: IgnoreConfig,
     pub security_check_enabled: bool,
     pub token_encoding: TokenEncoding,
+    /// Whether the (expensive) token counting phase has to run.
+    ///
+    /// The metrics are only ever read by the console report and by the
+    /// `--token-budget` check. When neither is active - e.g. `--stdout` or
+    /// `--quiet` - the whole phase can be skipped, which is by far the most
+    /// expensive part of a run. Library users keep the full metrics unless
+    /// they opt out explicitly.
+    pub need_metrics: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +127,7 @@ impl Default for Config {
             },
             security_check_enabled: true,
             token_encoding: TokenEncoding::O200kBase,
+            need_metrics: true,
         }
     }
 }

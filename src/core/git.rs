@@ -63,9 +63,9 @@ pub fn is_git_repository(dir: &Path) -> bool {
 
 /// Collect the working tree and staged diffs.
 pub fn get_diffs(dir: &Path) -> GitDiffResult {
-    if !is_git_repository(dir) {
-        return GitDiffResult::default();
-    }
+    // No `rev-parse` probe: `git diff` fails in the same way outside a work
+    // tree, and every extra process spawn costs several milliseconds on
+    // Windows.
     let work_tree = run_git(
         dir,
         &[
@@ -95,9 +95,6 @@ pub fn get_diffs(dir: &Path) -> GitDiffResult {
 
 /// Collect the commit history.
 pub fn get_logs(dir: &Path, max_commits: usize) -> GitLogResult {
-    if !is_git_repository(dir) {
-        return GitLogResult::default();
-    }
     let count = max_commits.to_string();
     let mut args: Vec<&str> = vec!["log"];
     args.extend_from_slice(LOG_HARDENING_ARGS);
@@ -164,9 +161,6 @@ pub fn parse_git_log(raw: &str) -> GitLogResult {
 /// Count how often each file was changed in the recent history.
 pub fn get_change_counts(dir: &Path, max_commits: usize) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
-    if !is_git_repository(dir) {
-        return counts;
-    }
     let count = max_commits.to_string();
     let mut args: Vec<&str> = vec!["log"];
     args.extend_from_slice(LOG_HARDENING_ARGS);

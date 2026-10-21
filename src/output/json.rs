@@ -12,7 +12,7 @@ pub fn summary_file_format_json() -> String {
 }
 
 /// Render the JSON output.
-pub fn render(ctx: &RenderContext) -> String {
+pub fn render(ctx: &RenderContext<'_>) -> String {
     let mut root = Map::new();
 
     if ctx.file_summary_enabled {
@@ -52,7 +52,7 @@ pub fn render(ctx: &RenderContext) -> String {
 
     if ctx.files_enabled {
         let mut files = Map::new();
-        for file in &ctx.processed_files {
+        for file in ctx.processed_files {
             files.insert(file.path.clone(), Value::String(file.content.clone()));
         }
         root.insert("files".to_string(), Value::Object(files));

@@ -206,6 +206,20 @@ fn rtrim_lines(content: &str) -> String {
     out
 }
 
+/// Copy the character at `i` to `out` and return the number of bytes it used.
+///
+/// The stripper works on bytes, but a byte that is part of a multi byte
+/// character has to be copied as a whole - otherwise every non ASCII
+/// character would be turned into a sequence of Latin-1 characters
+/// ("åäö" would become "Ã¥Ã¤Ã¶").
+fn push_char_at(out: &mut String, content: &str, i: usize) -> usize {
+    let Some(c) = content[i..].chars().next() else {
+        return 0;
+    };
+    out.push(c);
+    c.len_utf8()
+}
+
 /// Strip comments according to the given syntax.
 fn strip(content: &str, syntax: &Syntax) -> String {
     let bytes = content.as_bytes();
@@ -278,8 +292,7 @@ fn strip(content: &str, syntax: &Syntax) -> String {
                 if line_indent <= indent {
                     block_scalar_indent = None;
                 } else {
-                    out.push(c as char);
-                    i += 1;
+                    i += push_char_at(&mut out, content, i);
                     continue;
                 }
             }
@@ -331,12 +344,11 @@ fn strip(content: &str, syntax: &Syntax) -> String {
                 let d = bytes[i];
                 if d == b'\\' && quote == b'"' && i + 1 < bytes.len() {
                     out.push('\\');
-                    out.push(bytes[i + 1] as char);
-                    i += 2;
+                    i += 1;
+                    i += push_char_at(&mut out, content, i);
                     continue;
                 }
-                out.push(d as char);
-                i += 1;
+                i += push_char_at(&mut out, content, i);
                 if d == quote {
                     break;
                 }
@@ -386,12 +398,11 @@ fn strip(content: &str, syntax: &Syntax) -> String {
             }
         }
 
-        out.push(c as char);
+        i += push_char_at(&mut out, content, i);
         if c == b' ' || c == b'\t' {
             line_indent += 1;
         }
         at_line_start = false;
-        i += 1;
     }
 
     out
@@ -450,6 +461,18 @@ pub fn remove_empty_lines(content: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Non ASCII characters used to be corrupted: the stripper worked on
+    /// bytes and turned every continuation byte into its own Latin-1 char.
+    #[test]
+    fn preserves_non_ascii_characters() {
+        let code = "// kommentar\nlet x = \"åäö — ünïcode ☃\";\n";
+        let out = remove_comments(code, "rs").unwrap_or_default();
+        assert!(
+            out.contains("åäö — ünïcode ☃"),
+            "non ASCII text was corrupted: {out:?}"
+        );
+    }
+
     #[test]
     fn removes_line_comments() {
         let out = remove_comments("// hello\nlet x = 1; // trailing\n", "rs").unwrap();
@@ -465,13 +488,13 @@ mod tests {
     #[test]
     fn removes_block_comments_but_keeps_newlines() {
         let out = remove_comments("a /* one\ntwo */ b\n", "c").unwrap();
-        assert_eq!(out, "a  \n b\n");
+        assert_eq!(out, "a\n b\n");
     }
 
     #[test]
     fn python_hash_comments() {
         let out = remove_comments("# comment\nx = 1  # trailing\n", "py").unwrap();
-        assert_eq!(out, "\nx = 1  \n");
+        assert_eq!(out, "\nx = 1\n");
     }
 
     #[test]

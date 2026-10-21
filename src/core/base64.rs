@@ -1,4 +1,4 @@
-//! Base64 truncation (`--truncate-base64`).
+﻿//! Base64 truncation (`--truncate-base64`).
 
 const MIN_BASE64_LENGTH_DATA_URI: usize = 40;
 const MIN_BASE64_LENGTH_STANDALONE: usize = 256;
@@ -223,7 +223,7 @@ mod tests {
         let payload = "A".repeat(60);
         let content = format!("x data:image/png;base64,{payload} y");
         let out = truncate_base64_content(&content);
-        assert!(out.contains("data:image/png;base64,AAAAAAAA..."));
+        assert!(out.contains(&format!("data:image/png;base64,{}...", "A".repeat(32))));
     }
 
     #[test]
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn truncates_standalone_runs() {
-        let payload: String = "aB3".repeat(100);
+        let payload: String = "aB3cD4eF5gH6".repeat(30);
         let content = format!("prefix {payload} suffix");
         let out = truncate_base64_content(&content);
         assert!(out.ends_with("... suffix"));

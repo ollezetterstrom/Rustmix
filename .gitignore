@@ -1,1 +1,7 @@
-/target
+# Build artifacts
+/target/
+
+# Generated output
+repomix-output.xml
+repomix-output.*
+*.repomix-output.xml

@@ -1,4 +1,4 @@
-//! Directory structure rendering.
+﻿//! Directory structure rendering.
 
 use std::collections::HashMap;
 
@@ -180,16 +180,16 @@ mod tests {
     fn renders_tree_with_directories_first() {
         let files = vec!["src/main.rs".to_string(), "README.md".to_string()];
         let tree = generate_tree_string(&files, &[]);
-        assert_eq!(tree, "README.md\nsrc/\n  main.rs");
+        assert_eq!(tree, "src/\n  main.rs\nREADME.md");
     }
 
     #[test]
     fn renders_multiple_roots() {
         let roots = vec![
-            ("src".to_string(), vec!["src/a.rs".to_string()]),
-            ("tests".to_string(), vec!["tests/b.rs".to_string()]),
+            ("src".to_string(), vec!["a.rs".to_string()]),
+            ("tests".to_string(), vec!["b.rs".to_string()]),
         ];
         let tree = generate_tree_string_with_roots(&roots, &[]);
-        assert_eq!(tree, "[src]/\n  a.rs\n[tests]/\n  b.rs");
+        assert_eq!(tree, "[src]/\n  a.rs\n\n[tests]/\n  b.rs");
     }
 }

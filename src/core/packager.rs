@@ -1,4 +1,4 @@
-//! The packing pipeline: search, read, check, process, sort, render.
+﻿//! The packing pipeline: search, read, check, process, sort, render.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -56,7 +56,38 @@ pub fn pack(
     cfg: &Config,
     progress: &mut dyn FnMut(&str),
 ) -> Result<PackResult> {
+    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
+    let t0 = std::time::Instant::now();
+
+    // The tokenizer tables are built lazily; building them takes ~85 ms, so
+    // it is started right away and happens while the files are read.
+    if cfg.need_metrics {
+        crate::core::metrics::warm_up(cfg.token_encoding);
+    }
+    macro_rules! phase {
+        ($name:expr) => {
+            if timing {
+                eprintln!("[timing] {:<22} {:>8.1}ms", $name, t0.elapsed().as_secs_f64() * 1000.0);
+            }
+        };
+    }
+
     progress("Searching for files...");
+
+    // The git change counts are only needed in the sort phase, but computing
+    // them costs a `git log` process spawn. Start it right away so that it
+    // runs while the files are being searched and read.
+    let git_root = root_dirs.first().cloned().unwrap_or_else(|| PathBuf::from("."));
+    let change_counts_handle = if cfg.output.git.sort_by_changes {
+        let dir = git_root.clone();
+        let max_commits = cfg.output.git.sort_by_changes_max_commits;
+        Some(std::thread::spawn(move || {
+            git::get_change_counts(&dir, max_commits)
+        }))
+    } else {
+        None
+    };
+
     let search_results: Vec<search::SearchOutcome> = root_dirs
         .par_iter()
         .map(|root| search::search_files(root, cfg))
@@ -91,6 +122,7 @@ pub fn pack(
         empty_dir_paths.dedup();
     }
 
+    phase!("search");
     progress("Sorting files...");
     let root_files: Vec<RootFiles> = root_dirs
         .iter()
@@ -125,6 +157,7 @@ pub fn pack(
         .collect();
 
     // --- Collect and read the files -------------------------------------
+    phase!("setup");
     progress("Collecting files...");
     let mut raw_files: Vec<RawFile> = Vec::new();
     let mut skipped_files: Vec<SkippedFile> = Vec::new();
@@ -147,6 +180,7 @@ pub fn pack(
         }
     }
 
+    phase!("read");
     // --- Git integration -------------------------------------------------
     let git_diff_result = if cfg.output.git.include_diffs {
         git::get_diffs(root_dirs.first().map(|p| p.as_path()).unwrap_or(Path::new(".")))
@@ -179,6 +213,7 @@ pub fn pack(
     let suspicious_paths: std::collections::HashSet<String> =
         suspicious_files.iter().map(|r| r.file_path.clone()).collect();
 
+    phase!("security");
     // --- Process the content ---------------------------------------------
     progress("Processing files...");
     let processed = raw_files
@@ -196,19 +231,20 @@ pub fn pack(
         })
         .collect::<Vec<_>>();
 
+    phase!("process");
     // --- Sort by git change frequency ------------------------------------
     let mut processed = processed;
     if cfg.output.git.sort_by_changes {
-        let counts = git::get_change_counts(
-            root_dirs.first().map(|p| p.as_path()).unwrap_or(Path::new(".")),
-            cfg.output.git.sort_by_changes_max_commits,
-        );
+        let counts = change_counts_handle
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default();
         processed.sort_by_key(|f| counts.get(&f.path).copied().unwrap_or(0));
     }
 
     // --- Build the directory tree -----------------------------------------
     let tree_string = build_tree_string(&root_files, &root_labels, &all_file_paths, &empty_dir_paths, cfg);
 
+    phase!("sort");
     // --- Render ------------------------------------------------------------
     progress("Generating output...");
     let instruction = load_instruction(cfg)?;
@@ -216,35 +252,63 @@ pub fn pack(
 
     let output = output::render(cfg.output.style, &ctx);
 
+    phase!("render");
     // --- Metrics ------------------------------------------------------------
-    progress("Calculating metrics...");
-    let file_metrics = crate::core::metrics::calculate_file_metrics(
-        &processed
-            .iter()
-            .map(|f| (f.path.clone(), f.content.clone()))
-            .collect::<Vec<_>>(),
-        cfg.token_encoding,
-    );
-    let total_characters: usize = output.chars().count();
-    let total_tokens = crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding);
-    let git_diff_tokens = crate::core::metrics::count_tokens_chunked(
-        &format!(
-            "{}{}",
-            git_diff_result.work_tree_diff_content, git_diff_result.staged_diff_content
-        ),
-        cfg.token_encoding,
-    );
-    let git_log_tokens = crate::core::metrics::count_tokens_chunked(&git_log_result.log_content, cfg.token_encoding);
+    // The token counting phase is by far the most expensive part of a run.
+    // It is only needed for the console report and the `--token-budget`
+    // check, so it can be skipped entirely when neither is active.
+    let metrics = if cfg.need_metrics {
+        progress("Calculating metrics...");
+        let file_metrics =
+            crate::core::metrics::calculate_file_metrics(&processed, cfg.token_encoding);
+        let total_characters: usize = crate::core::metrics::utf16_len(&output);
 
-    let metrics = Metrics {
-        total_files: processed.len(),
-        total_characters,
-        total_tokens,
-        file_metrics,
-        git_diff_tokens,
-        git_log_tokens,
+        // The reference implementation does not tokenize the whole output
+        // again: it sums the per-file token counts and adds the tokens of the
+        // "wrapper" (everything that is not file content). This is both much
+        // cheaper and the only way to reproduce the reference token total
+        // exactly - counting the whole output would merge tokens across the
+        // file boundaries.
+        let total_tokens = if crate::core::metrics::can_use_fast_output_token_path(cfg) {
+            match crate::core::metrics::extract_output_wrapper(&output, &processed) {
+                Some(wrapper) => {
+                    let file_tokens_sum: usize = file_metrics.iter().map(|m| m.tokens).sum();
+                    file_tokens_sum
+                        + crate::core::metrics::count_tokens_chunked(&wrapper, cfg.token_encoding)
+                }
+                None => crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding),
+            }
+        } else {
+            crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
+        };
+        let git_diff_tokens = crate::core::metrics::count_tokens_chunked(
+            &format!(
+                "{}{}",
+                git_diff_result.work_tree_diff_content, git_diff_result.staged_diff_content
+            ),
+            cfg.token_encoding,
+        );
+        let git_log_tokens =
+            crate::core::metrics::count_tokens_chunked(&git_log_result.log_content, cfg.token_encoding);
+
+        Metrics {
+            total_files: processed.len(),
+            total_characters,
+            total_tokens,
+            file_metrics,
+            git_diff_tokens,
+            git_log_tokens,
+        }
+    } else {
+        Metrics {
+            total_files: processed.len(),
+            ..Metrics::default()
+        }
     };
 
+    phase!("metrics");
+    let git_diff_tokens = metrics.git_diff_tokens;
+    let git_log_tokens = metrics.git_log_tokens;
     Ok(PackResult {
         output,
         output_files: Vec::new(),
@@ -534,20 +598,26 @@ fn build_tree_string(
 }
 
 /// Build the render context.
-pub fn build_render_context(
+pub fn build_render_context<'a>(
     cfg: &Config,
-    processed_files: &[ProcessedFile],
+    processed_files: &'a [ProcessedFile],
     tree_string: &str,
     instruction: &Option<String>,
     git_diff_result: &GitDiffResult,
     git_log_result: &GitLogResult,
-) -> RenderContext {
+) -> RenderContext<'a> {
     let has_instruction = instruction.is_some();
-    let mut contents: Vec<&str> = processed_files.iter().map(|f| f.content.as_str()).collect();
-    contents.push(tree_string);
-    contents.push(&git_diff_result.work_tree_diff_content);
-    contents.push(&git_diff_result.staged_diff_content);
-    let delimiter = output::calculate_markdown_delimiter(&contents);
+    // The code fence delimiter is only used by the markdown style, and
+    // computing it means scanning the whole repository content.
+    let delimiter = if cfg.output.style == crate::cli::OutputStyle::Markdown {
+        let mut contents: Vec<&str> = processed_files.iter().map(|f| f.content.as_str()).collect();
+        contents.push(tree_string);
+        contents.push(&git_diff_result.work_tree_diff_content);
+        contents.push(&git_diff_result.staged_diff_content);
+        output::calculate_markdown_delimiter(&contents)
+    } else {
+        String::new()
+    };
 
     RenderContext {
         generation_header: decorations::generate_header(cfg),
@@ -558,7 +628,7 @@ pub fn build_render_context(
         header_text: cfg.output.header_text.clone(),
         instruction: instruction.clone(),
         tree_string: tree_string.to_string(),
-        processed_files: processed_files.to_vec(),
+        processed_files,
         file_summary_enabled: cfg.output.file_summary,
         directory_structure_enabled: cfg.output.directory_structure,
         files_enabled: cfg.output.files,

@@ -285,6 +285,7 @@ pub fn search_files(root: &Path, cfg: &Config) -> Result<SearchOutcome> {
 
     let mut builder = WalkBuilder::new(root);
     builder
+        .standard_filters(false)
         .hidden(false)
         .git_ignore(cfg.ignore.use_gitignore)
         .git_global(false)
@@ -293,7 +294,6 @@ pub fn search_files(root: &Path, cfg: &Config) -> Result<SearchOutcome> {
         .require_git(false)
         .parents(true)
         .follow_links(false)
-        .standard_filters(false)
         .same_file_system(false);
     builder.add_custom_ignore_filename(".repomixignore");
 
@@ -316,6 +316,10 @@ pub fn search_files(root: &Path, cfg: &Config) -> Result<SearchOutcome> {
     let mut file_paths: Vec<String> = Vec::new();
     let mut dir_paths: Vec<String> = Vec::new();
 
+    // Fine grained instrumentation of the search phase.
+    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
+    let t_walk = std::time::Instant::now();
+    let mut t_match = std::time::Duration::ZERO;
     for entry in builder.build() {
         let entry = match entry {
             Ok(e) => e,
@@ -344,16 +348,27 @@ pub fn search_files(root: &Path, cfg: &Config) -> Result<SearchOutcome> {
         if !ft.is_file() {
             continue;
         }
-        if matchers.is_ignored(&rel) {
-            continue;
-        }
-        if !matchers.is_included(&rel) {
+        let t0 = std::time::Instant::now();
+        let ignored = matchers.is_ignored(&rel);
+        let included = !ignored && matchers.is_included(&rel);
+        t_match += t0.elapsed();
+        if ignored || !included {
             continue;
         }
         file_paths.push(rel);
     }
+    let t_walk = t_walk.elapsed();
 
+    let t_sort = std::time::Instant::now();
     sort_paths(&mut file_paths);
+    let t_sort = t_sort.elapsed();
+
+    if timing {
+        eprintln!(
+            "[timing]   walk={t_walk:?} match={t_match:?} sort={t_sort:?} files={}",
+            file_paths.len()
+        );
+    }
 
     let mut empty_dir_paths = Vec::new();
     if include_empty_directories {
@@ -409,6 +424,7 @@ pub fn list_directories(root: &Path, cfg: &Config) -> Result<Vec<String>> {
     let matchers = build_matchers(root, cfg);
     let mut builder = WalkBuilder::new(root);
     builder
+        .standard_filters(false)
         .hidden(false)
         .git_ignore(cfg.ignore.use_gitignore)
         .git_global(false)
@@ -416,8 +432,7 @@ pub fn list_directories(root: &Path, cfg: &Config) -> Result<Vec<String>> {
         .ignore(cfg.ignore.use_dot_ignore)
         .require_git(false)
         .parents(true)
-        .follow_links(false)
-        .standard_filters(false);
+        .follow_links(false);
     builder.add_custom_ignore_filename(".repomixignore");
     let matchers = Arc::new(matchers);
     let m = Arc::clone(&matchers);
@@ -462,6 +477,7 @@ pub fn list_files(root: &Path, cfg: &Config) -> Result<Vec<String>> {
     let matchers = build_matchers(root, cfg);
     let mut builder = WalkBuilder::new(root);
     builder
+        .standard_filters(false)
         .hidden(false)
         .git_ignore(cfg.ignore.use_gitignore)
         .git_global(false)
@@ -469,8 +485,7 @@ pub fn list_files(root: &Path, cfg: &Config) -> Result<Vec<String>> {
         .ignore(cfg.ignore.use_dot_ignore)
         .require_git(false)
         .parents(true)
-        .follow_links(false)
-        .standard_filters(false);
+        .follow_links(false);
     builder.add_custom_ignore_filename(".repomixignore");
     let matchers = Arc::new(matchers);
     let m = Arc::clone(&matchers);

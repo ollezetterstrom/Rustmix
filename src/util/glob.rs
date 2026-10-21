@@ -1,22 +1,22 @@
-//! A small, dependency-free glob matcher that reproduces the semantics of
+﻿//! A small, dependency-free glob matcher that reproduces the semantics of
 //! the `minimatch` package used by Repomix (via `globby` / `fast-glob`).
 //!
 //! Supported syntax:
 //!
-//! * `*` — matches any run of characters inside a single path segment
-//! * `?` — matches exactly one character inside a single path segment
-//! * `**` — as a whole segment, matches zero or more path segments
-//! * `[abc]`, `[a-z]`, `[!abc]` — character classes
-//! * `{a,b}` — brace expansion
-//! * `\x` — literal escape
-//! * `!pattern` — negation (handled by the caller, see [`PatternSet`])
+//! * `*` - matches any run of characters inside a single path segment
+//! * `?` - matches exactly one character inside a single path segment
+//! * `**` - as a whole segment, matches zero or more path segments
+//! * `[abc]`, `[a-z]`, `[!abc]` - character classes
+//! * `{a,b}` - brace expansion
+//! * `\x` - literal escape
+//! * `!pattern` - negation (handled by the caller, see [`PatternSet`])
 
 /// A single path segment pattern.
 #[derive(Debug, Clone)]
 enum Segment {
     /// Literal text, possibly containing `*`/`?`/classes.
     Pattern(Vec<Token>),
-    /// `**` — matches zero or more segments.
+    /// `**` - matches zero or more segments.
     GlobStar,
 }
 
@@ -46,6 +46,9 @@ pub struct Pattern {
     pub literal_prefix: Vec<String>,
     /// True when the pattern contains at least one globstar.
     pub has_globstar: bool,
+    /// True when a trailing `/**` requires an actual slash because the
+    /// preceding segment ends in a wildcard.
+    trailing_needs_slash: bool,
 }
 
 /// A set of patterns; a path matches when *any* pattern matches.
@@ -167,17 +170,31 @@ impl Pattern {
             }
         }
 
+        // A trailing `/**` only matches the path itself when the preceding
+        // segment does not end in a wildcard (`a/**` matches `a`, `a*/**` does
+        // not).
+        let trailing_needs_slash = match segments.len() {
+            0 | 1 => false,
+            n => match &segments[n - 2] {
+                Segment::Pattern(tokens) => {
+                    matches!(tokens.last(), Some(Token::Star))
+                }
+                Segment::GlobStar => false,
+            },
+        };
+
         Some(Pattern {
             segments,
             min_depth,
             max_depth,
             literal_prefix,
             has_globstar,
+            trailing_needs_slash,
         })
     }
 
     pub fn matches(&self, path_segments: &[&str]) -> bool {
-        match_segments(&self.segments, path_segments)
+        match_segments(&self.segments, path_segments, self.trailing_needs_slash)
     }
 
     /// Does this pattern match every path below the given directory?
@@ -190,7 +207,7 @@ impl Pattern {
         if !matches!(last, Segment::GlobStar) {
             return false;
         }
-        match_segments(prefix, dir)
+        match_segments(prefix, dir, false)
     }
 
     /// Conservative check: could this pattern match a path *inside* the given
@@ -217,20 +234,35 @@ impl Pattern {
 }
 
 /// Match pattern segments against path segments.
-fn match_segments(pat: &[Segment], path: &[&str]) -> bool {
+fn match_segments(pat: &[Segment], path: &[&str], trailing_needs_slash: bool) -> bool {
     if pat.is_empty() {
         return path.is_empty();
     }
     match &pat[0] {
         Segment::GlobStar => {
-            // `**` may absorb zero or more path segments.
-            // Guard against pathological patterns with a simple recursion.
-            for i in 0..=path.len() {
-                if match_segments(&pat[1..], &path[i..]) {
-                    return true;
+            if pat.len() == 1 {
+                // Trailing `**`.
+                //
+                // `picomatch` compiles a trailing `/**` to "(slash + anything) or
+                // nothing" - but only when the preceding segment does not end
+                // in a wildcard. `a/**` therefore matches `a` while `a*/**`
+                // requires a trailing slash.
+                let min = if trailing_needs_slash { 1 } else { 0 };
+                for i in min..=path.len() {
+                    if match_segments(&pat[1..], &path[i..], trailing_needs_slash) {
+                        return true;
+                    }
                 }
+                false
+            } else {
+                // A globstar in the middle may absorb zero segments.
+                for i in 0..=path.len() {
+                    if match_segments(&pat[1..], &path[i..], trailing_needs_slash) {
+                        return true;
+                    }
+                }
+                false
             }
-            false
         }
         Segment::Pattern(tokens) => {
             if path.is_empty() {
@@ -239,7 +271,7 @@ fn match_segments(pat: &[Segment], path: &[&str]) -> bool {
             if !match_tokens(tokens, path[0].as_bytes()) {
                 return false;
             }
-            match_segments(&pat[1..], &path[1..])
+            match_segments(&pat[1..], &path[1..], trailing_needs_slash)
         }
     }
 }

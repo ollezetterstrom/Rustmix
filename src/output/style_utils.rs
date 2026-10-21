@@ -184,11 +184,59 @@ pub fn escape_xml(text: &str) -> String {
     out
 }
 
-/// Trim the way JavaScript's `String.prototype.trim` does.
+/// Is this a character that JavaScript's `String.prototype.trim` removes?
 ///
-/// JavaScript trims all Unicode whitespace, which includes `U+FEFF`.
+/// This is the exact set from the ECMAScript specification: the `WhiteSpace`
+/// and `LineTerminator` productions. It is *not* the same as Rust's
+/// `char::is_whitespace`, which also trims `U+0085` (NEL).
+pub fn is_js_whitespace(c: char) -> bool {
+    matches!(c,
+        '\u{0009}'..='\u{000D}'
+        | '\u{0020}'
+        | '\u{00A0}'
+        | '\u{1680}'
+        | '\u{2000}'..='\u{200A}'
+        | '\u{2028}'
+        | '\u{2029}'
+        | '\u{202F}'
+        | '\u{205F}'
+        | '\u{3000}'
+        | '\u{FEFF}')
+}
+
+/// Trim the way JavaScript's `String.prototype.trim` does.
 pub fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
+    text.trim_matches(is_js_whitespace)
+}
+
+/// Trim in place and append the trailing newline, without allocating a copy.
+///
+/// This is the allocation free equivalent of `format!("{}\n", js_trim(&out))`.
+pub fn finalize_trimmed_output(mut out: String) -> String {
+    // Trailing whitespace.
+    let end = out.trim_end_matches(is_js_whitespace).len();
+    out.truncate(end);
+    // Leading whitespace.
+    let start = out.len() - out.trim_start_matches(is_js_whitespace).len();
+    if start > 0 {
+        out.drain(..start);
+    }
+    out.push('\n');
+    out
+}
+
+/// Estimate the size of the rendered output, so the buffer does not have to
+/// grow (and copy) while it is filled.
+pub fn estimate_output_size(
+    files: &[crate::output::ProcessedFile],
+    tree_string: &str,
+    extra: usize,
+) -> usize {
+    let files_bytes: usize = files
+        .iter()
+        .map(|f| f.path.len() + f.content.len() + 64)
+        .sum();
+    files_bytes + tree_string.len() + extra + 8192
 }
 
 #[cfg(test)]

@@ -1,20 +1,17 @@
-//! Repomix - a high performance, drop-in compatible codebase packer.
-
-mod cli;
-mod config;
-mod core;
-mod output;
-mod report;
-mod util;
+﻿//! Repomix - a high performance, drop-in compatible codebase packer.
 
 use std::path::PathBuf;
+
+use repomix_rs::cli::{self, Cli};
+use repomix_rs::config::{self, Config};
+use repomix_rs::core::packager;
+use repomix_rs::output;
+use repomix_rs::report;
 
 use anyhow::{bail, Result};
 use clap::Parser;
 
-use cli::Cli;
-use config::Config;
-use core::packager;
+
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -32,7 +29,7 @@ fn main() {
     match run(cli) {
         Ok(code) => std::process::exit(code),
         Err(err) => {
-            eprintln!("✖ {err}");
+            eprintln!("\u{2716} {err}");
             std::process::exit(1);
         }
     }
@@ -49,10 +46,16 @@ fn run(cli: Cli) -> Result<i32> {
     };
     let cfg = Config::build(cwd.clone(), &cli, file_config.as_ref());
 
+    // The token counting phase is the most expensive part of a run, and its
+    // result is only ever read by the console report and the token budget
+    // check. Skip it entirely when neither is active.
+    let mut cfg = cfg;
+    cfg.need_metrics = (!cli.quiet && !cfg.output.stdout) || cfg.output.token_budget.is_some();
+
     if cli.quiet {
         // Nothing is printed except errors.
     } else if !cfg.output.stdout {
-        println!("\n📦 Repomix v{}\n", env!("CARGO_PKG_VERSION"));
+        println!("\n\u{1F4E6} Repomix v{}\n", env!("CARGO_PKG_VERSION"));
     }
 
     // Resolve the target directories.
@@ -75,7 +78,6 @@ fn run(cli: Cli) -> Result<i32> {
 
     // --- Write the output ------------------------------------------------
     let mut output_files: Vec<PathBuf> = Vec::new();
-    let mut final_output = result.output.clone();
 
     if let Some(max_bytes) = cfg.output.split_output {
         if cfg.output.stdout {
@@ -95,7 +97,7 @@ fn run(cli: Cli) -> Result<i32> {
     }
 
     if cfg.output.copy_to_clipboard {
-        output::writer::copy_to_clipboard(&final_output)?;
+        output::writer::copy_to_clipboard(&result.output)?;
     }
 
     // --- Report ------------------------------------------------------------
@@ -134,7 +136,7 @@ fn run(cli: Cli) -> Result<i32> {
     if let Some(budget) = cfg.output.token_budget {
         if result.metrics.total_tokens > budget as usize {
             eprintln!(
-                "✖ Token budget exceeded: {} tokens > {} tokens",
+                "\u{2716} Token budget exceeded: {} tokens > {} tokens",
                 result.metrics.total_tokens, budget
             );
             return Ok(1);

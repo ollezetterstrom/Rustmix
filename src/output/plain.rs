@@ -6,8 +6,12 @@ const PLAIN_SEPARATOR: &str = "================";
 const PLAIN_LONG_SEPARATOR: &str = "================================================================";
 
 /// Render the plain text output.
-pub fn render(ctx: &RenderContext) -> String {
-    let mut out = String::new();
+pub fn render(ctx: &RenderContext<'_>) -> String {
+    let mut out = String::with_capacity(super::style_utils::estimate_output_size(
+        ctx.processed_files,
+        &ctx.tree_string,
+        ctx.git_diff_work_tree.len() + ctx.git_diff_staged.len(),
+    ));
 
     out.push('\n');
 
@@ -57,7 +61,7 @@ pub fn render(ctx: &RenderContext) -> String {
         out.push_str("\nFiles\n");
         out.push_str(PLAIN_LONG_SEPARATOR);
         out.push_str("\n\n");
-        for file in &ctx.processed_files {
+        for file in ctx.processed_files {
             out.push_str(PLAIN_SEPARATOR);
             out.push_str("\nFile: ");
             out.push_str(&file.path);
@@ -133,5 +137,5 @@ pub fn render(ctx: &RenderContext) -> String {
     out.push_str(PLAIN_LONG_SEPARATOR);
     out.push('\n');
 
-    format!("{}\n", super::style_utils::js_trim(&out))
+    super::style_utils::finalize_trimmed_output(out)
 }

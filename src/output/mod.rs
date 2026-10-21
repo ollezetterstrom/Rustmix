@@ -19,8 +19,11 @@ pub struct ProcessedFile {
 }
 
 /// Everything the formatters need to render the output.
+///
+/// The processed files are borrowed instead of owned: cloning them would
+/// copy the whole repository content a second time.
 #[derive(Debug, Clone, Default)]
-pub struct RenderContext {
+pub struct RenderContext<'a> {
     pub generation_header: String,
     pub summary_purpose: String,
     pub summary_file_format: String,
@@ -29,7 +32,7 @@ pub struct RenderContext {
     pub header_text: Option<String>,
     pub instruction: Option<String>,
     pub tree_string: String,
-    pub processed_files: Vec<ProcessedFile>,
+    pub processed_files: &'a [ProcessedFile],
     pub file_summary_enabled: bool,
     pub directory_structure_enabled: bool,
     pub files_enabled: bool,
@@ -65,7 +68,7 @@ pub fn calculate_markdown_delimiter(contents: &[&str]) -> String {
 }
 
 /// Render the output in the requested style.
-pub fn render(style: crate::cli::OutputStyle, ctx: &RenderContext) -> String {
+pub fn render(style: crate::cli::OutputStyle, ctx: &RenderContext<'_>) -> String {
     match style {
         crate::cli::OutputStyle::Xml => {
             if ctx.escape_file_content {
