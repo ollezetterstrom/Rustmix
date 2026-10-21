@@ -11,7 +11,7 @@ use crate::core::comments;
 use crate::core::compress;
 use crate::core::decorations;
 use crate::core::git::{self, GitDiffResult, GitLogResult};
-use crate::core::metrics::{FileMetrics, Metrics};
+use crate::core::metrics::Metrics;
 use crate::core::read::{self, RawFile, SkipReason};
 use crate::core::search;
 use crate::core::security::{self, SecurityResult};

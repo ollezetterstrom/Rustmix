@@ -868,8 +868,6 @@ fn parse_typescript_capture(
 
 /// Match `(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=`.
 fn ts_function_name(line: &str) -> Option<String> {
-    let bytes = line.as_bytes();
-    let mut i = 0usize;
     // Optional "export".
     //
     // NOTE: `line[8..]` would panic for lines shorter than eight bytes or
@@ -892,9 +890,7 @@ fn ts_function_name(line: &str) -> Option<String> {
         }
         None => line,
     };
-    let _ = bytes;
     let trimmed = rest.trim_start();
-    let mut chars = trimmed.char_indices();
     let mut idx = 0usize;
     for kw in ["const", "let", "var"] {
         if trimmed.starts_with(kw) {
@@ -917,10 +913,7 @@ fn ts_function_name(line: &str) -> Option<String> {
     let mut it = after[name.len()..].trim_start().chars();
     match it.next() {
         Some('=') => Some(name),
-        _ => {
-            let _ = &mut chars;
-            None
-        }
+        _ => None,
     }
 }
 

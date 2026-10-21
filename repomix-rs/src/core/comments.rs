@@ -440,11 +440,8 @@ fn detect_heredoc(content: &str, pos: usize) -> Option<String> {
         return None;
     }
     let delim = content[start..i].to_string();
-    if let Some(q) = quote {
-        if i < bytes.len() && bytes[i] == q {
-            i += 1;
-        }
-    }
+    // The closing quote is optional and not needed any further.
+    let _ = quote;
     Some(delim)
 }
 

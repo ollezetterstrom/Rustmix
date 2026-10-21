@@ -1,4 +1,4 @@
-﻿//! Repomix - a high performance, drop-in compatible codebase packer.
+//! Repomix - a high performance, drop-in compatible codebase packer.
 
 use std::path::PathBuf;
 
@@ -134,7 +134,7 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
     // --- Write the output ------------------------------------------------
     let mut output_files: Vec<PathBuf> = Vec::new();
 
-    if let Some(max_bytes) = cfg.output.split_output {
+    if cfg.output.split_output.is_some() {
         if cfg.output.stdout {
             bail!("--split-output cannot be used with --stdout. Split output requires writing to filesystem.");
         }

@@ -30,7 +30,6 @@ pub struct GitLogResult {
 /// external diff drivers.
 const UNTRUSTED_CONFIG_ARGS: &[&str] = &["-c", "core.fsmonitor="];
 const LOG_HARDENING_ARGS: &[&str] = &["--no-show-signature", "--no-ext-diff", "--no-textconv"];
-const DIFF_HARDENING_ARGS: &[&str] = &["--no-ext-diff", "--no-textconv"];
 
 /// Run a git command inside `dir` with the hardened arguments.
 fn run_git(dir: &Path, args: &[&str]) -> Option<String> {

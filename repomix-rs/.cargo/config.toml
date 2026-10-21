@@ -1,0 +1,15 @@
+# Link the C runtime statically, so that the binary is a single file that
+# runs on any Windows machine without the Visual C++ redistributable.
+#
+# The reference implementation needs a Node runtime and an 87 MB dependency
+# tree; this binary should not need anything but itself.
+#
+# Two things are needed for that:
+#   * the Rust code links the CRT statically (+crt-static), and
+#   * the C code of the tree-sitter grammars is compiled with /MT, otherwise
+#     it pulls the dynamic runtime back in.
+[build]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+CFLAGS_x86_64_pc_windows_msvc = "/MT"

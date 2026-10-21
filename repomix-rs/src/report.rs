@@ -207,7 +207,7 @@ pub fn report_token_count_tree(metrics: &[FileMetrics], threshold: u64) {
     print_tree_node(&root, "", true, threshold);
 }
 
-fn print_tree_node(node: &TokenTreeNode, prefix: &str, is_last: bool, threshold: u64) {
+fn print_tree_node(node: &TokenTreeNode, prefix: &str, _is_last: bool, threshold: u64) {
     let entries: Vec<(&String, &TokenTreeNode)> = node
         .children
         .iter()

@@ -84,6 +84,8 @@ C:\Users\ozett\Documents\Projects\Rustmix\
 ├─ compare-metrics.ps1          # 8-case REPORT differential test (token counts!)
 ├─ compare-flags.ps1            # 15-case differential test for the remaining flags
 ├─ make-fixtures.ps1            # creates the fixture repositories the suites use
+├─ install.ps1                  # installs the binary and puts it on the PATH
+├─ portable-check.ps1           # lists the DLLs a PE binary imports
 ├─ CONTEXT.md                   # this file
 ├─ PROMPT.md                    # the prompt for the analysis model
 ├─ testdata\                    # small fixture repo (incl. a unicode fixture)
@@ -408,6 +410,14 @@ unicode-width 0.2
 ```
 
 Release profile: `opt-level=3, lto="fat", codegen-units=1, panic="abort", strip=true`.
+
+**The binary is statically linked.** `repomix-rs/.cargo/config.toml` sets
+`-C target-feature=+crt-static` and compiles the C code of the tree-sitter
+grammars with `/MT`, so the executable only imports the Windows system
+libraries (`kernel32`, `advapi32`, `ntdll`, `user32`, `userenv`) and needs
+neither the Visual C++ redistributable nor a Node runtime. **Cargo reads
+`.cargo/config.toml` from the *working directory*, so the build has to run
+inside the crate directory** - `install.ps1` and `cargo install` both do.
 
 **Dependency policy:** adding a small, well-maintained crate is acceptable
 (`aho-corasick`, `memchr`, `rayon` are already in the tree transitively).

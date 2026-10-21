@@ -158,7 +158,7 @@ pub fn build_matchers(root: &Path, cfg: &Config) -> Matchers {
     let mut ignore_patterns: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    let mut push = |patterns: &mut Vec<String>, seen: &mut std::collections::HashSet<String>, p: &str| {
+    let push = |patterns: &mut Vec<String>, seen: &mut std::collections::HashSet<String>, p: &str| {
         if seen.insert(p.to_string()) {
             patterns.push(p.to_string());
         }

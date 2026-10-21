@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 use crate::cli::OutputStyle;
 use crate::config::Config;
 use crate::core::packager::{self, PackResult};
-use crate::output::{self, RenderContext};
+use crate::output;
 use crate::util::path::locale_cmp;
 
 /// A rendered output part.
@@ -55,7 +55,7 @@ pub fn build_split_groups(
     let mut groups: Vec<SplitGroup> = Vec::new();
     let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
-    let mut push = |groups: &mut Vec<SplitGroup>,
+    let push = |groups: &mut Vec<SplitGroup>,
                     index: &mut std::collections::HashMap<String, usize>,
                     root_entry: String,
                     path: String,

@@ -121,7 +121,6 @@ impl Pattern {
         let mut segments = Vec::with_capacity(raw_segments.len());
         let mut min_depth = 0usize;
         let mut has_globstar = false;
-        let mut max_depth = Some(0usize);
 
         for raw in &raw_segments {
             if *raw == "**" {
@@ -133,11 +132,7 @@ impl Pattern {
             }
         }
 
-        if has_globstar {
-            max_depth = None;
-        } else {
-            max_depth = Some(min_depth);
-        }
+        let max_depth = if has_globstar { None } else { Some(min_depth) };
 
         // Literal prefix: leading segments that contain no wildcards.
         let mut literal_prefix = Vec::new();
