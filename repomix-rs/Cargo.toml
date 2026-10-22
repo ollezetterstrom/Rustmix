@@ -45,6 +45,11 @@ name = "tokprefix"
 path = "src/bin/tokprefix.rs"
 required-features = ["dev"]
 
+[[bin]]
+name = "bench_sec"
+path = "src/bin/bench_sec.rs"
+required-features = ["dev"]
+
 [features]
 dev = ["dep:fancy-regex"]
 

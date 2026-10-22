@@ -69,18 +69,29 @@ pub fn read_raw_file(abs_path: &Path, rel_path: &str, max_file_size: u64) -> Raw
             content: None,
             skipped: Some(SkipReason::BinaryContent),
         },
-        BinaryVerdict::Text => match std::str::from_utf8(&buf) {
-            Ok(text) => RawFile {
+        BinaryVerdict::Text => {
+            // `inspect` has already checked that the buffer is valid UTF-8
+            // (with the SIMD validator), except for a file that starts with
+            // a UTF-8 byte order mark - that one is checked here.
+            let mut buf = buf;
+            if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                buf.drain(..3);
+                if simdutf8::basic::from_utf8(&buf).is_err() {
+                    return RawFile {
+                        path: rel_path.to_string(),
+                        content: None,
+                        skipped: Some(SkipReason::EncodingError),
+                    };
+                }
+            }
+            // SAFETY: the buffer was validated above, so it is valid UTF-8.
+            let text = unsafe { String::from_utf8_unchecked(buf) };
+            RawFile {
                 path: rel_path.to_string(),
-                content: Some(binary::strip_utf8_bom(text).to_string()),
+                content: Some(text),
                 skipped: None,
-            },
-            Err(_) => RawFile {
-                path: rel_path.to_string(),
-                content: None,
-                skipped: Some(SkipReason::EncodingError),
-            },
-        },
+            }
+        }
         BinaryVerdict::NeedsDecoding => decode_fallback(&buf, rel_path),
     }
 }

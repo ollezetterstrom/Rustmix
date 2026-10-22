@@ -1,4 +1,4 @@
-﻿//! Secret detection.
+//! Secret detection.
 //!
 //! A re-implementation of the `secretlint` "recommend" preset that Repomix
 //! uses. Files that match are excluded from the packed output.
@@ -16,7 +16,7 @@ use regex::Regex;
 enum Head {
     /// No constraint.
     Any,
-    /// `(?<!\p{L})` — the preceding character must not be a letter.
+    /// `(?<!\p{L})` � the preceding character must not be a letter.
     NotLetter,
 }
 
@@ -66,6 +66,85 @@ enum Kind {
     SendGrid,
 }
 
+/// An additional condition on the text that follows a literal.
+///
+/// Some rules have a literal that occurs in almost every file - `://` for
+/// the basic auth rule, `secret` for the AWS rule - while the rule itself
+/// only matches a very specific shape. Checking that shape in the prefilter
+/// avoids running the regular expression over the whole file.
+///
+/// A guard is only allowed to be a *necessary* condition: when it rejects a
+/// literal occurrence, the rule provably cannot match at that place. The
+/// unit test `the_guard_never_hides_a_matching_rule` checks that.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Guard {
+    /// No condition.
+    None,
+    /// `scheme://user:password@host` - the literal `://` has to be followed
+    /// by a user name, a colon and a password.
+    BasicAuth,
+    /// The literal has to be followed by `_?ACCESS` (the AWS access key).
+    AwsAccess,
+    /// The literal has to be followed by one of the given strings (the
+    /// scheme of a database connection string).
+    Scheme(&'static [&'static str]),
+}
+
+impl Guard {
+    /// Does the text after the literal satisfy the condition?
+    fn holds(self, after: &[u8]) -> bool {
+        match self {
+            Guard::None => true,
+            Guard::BasicAuth => has_basic_auth_shape(after),
+            Guard::AwsAccess => has_aws_access(after),
+            Guard::Scheme(schemes) => schemes.iter().any(|scheme| after.starts_with(scheme.as_bytes())),
+        }
+    }
+}
+
+/// Is there a `user:password@` after the scheme?
+///
+/// The regular expression of the rule is
+/// `://[-a-zA-Z0-9_]{1,256}:[-a-zA-Z0-9_]{1,256}@`, and the character class
+/// does not contain a colon or an at sign - so the user name ends at the
+/// first colon and the password at the first at sign.
+fn has_basic_auth_shape(after: &[u8]) -> bool {
+    // The user name: 1 to 256 characters.
+    let mut i = 0usize;
+    let limit = after.len().min(257);
+    while i < limit && is_basic_auth_char(after[i]) {
+        i += 1;
+    }
+    if i == 0 || i >= after.len() || after[i] != b':' {
+        return false;
+    }
+    // The password: 1 to 256 characters.
+    let start = i + 1;
+    let mut j = start;
+    let limit = after.len().min(start + 257);
+    while j < limit && is_basic_auth_char(after[j]) {
+        j += 1;
+    }
+    j > start && j < after.len() && after[j] == b'@'
+}
+
+#[inline]
+fn is_basic_auth_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
+}
+
+/// Is the literal followed by `_?ACCESS`?
+///
+/// The regular expression of the rule is
+/// `["']?(?:AWS|aws|Aws)?_?(?:SECRET|secret|Secret)_?(?:ACCESS|access|Access)_?(?:KEY|key|Key)`.
+fn has_aws_access(after: &[u8]) -> bool {
+    let rest = match after.first() {
+        Some(b'_') => &after[1..],
+        _ => after,
+    };
+    rest.len() >= 6 && rest[..6].eq_ignore_ascii_case(b"access")
+}
+
 struct Rule {
     name: &'static str,
     /// The raw regex pattern. The regex itself is compiled lazily, because
@@ -81,6 +160,8 @@ struct Rule {
     head: Head,
     tail: Tail,
     kind: Kind,
+    /// An additional condition on the text that follows one of the literals.
+    guard: Guard,
     /// The lazily compiled regex. A failed compilation is cached as well, so
     /// a broken pattern is not retried for every file.
     re: OnceLock<Option<Regex>>,
@@ -103,14 +184,32 @@ struct Prefilter {
     /// A literal can belong to more than one rule (e.g. `ghs_` is shared by
     /// two GitHub rules), so this is a mask and not a single rule index.
     literal_to_mask: Vec<u64>,
+    /// For every literal, the condition on the text that follows it.
+    ///
+    /// A literal that belongs to rules with different conditions gets
+    /// `Guard::None` - the rules are then always evaluated.
+    literal_to_guard: Vec<Guard>,
 }
 
 impl Prefilter {
     /// The bitmask of rules that may match the given content.
     fn candidate_rules(&self, content: &str) -> u64 {
         let mut mask = 0u64;
+        let bytes = content.as_bytes();
         for m in self.ac.find_iter(content) {
-            mask |= self.literal_to_mask[m.pattern().as_usize()];
+            let pat_mask = self.literal_to_mask[m.pattern().as_usize()];
+            // Every rule of this literal is already a candidate.
+            if (mask & pat_mask) == pat_mask {
+                continue;
+            }
+            // The literal alone is not enough: the rule needs a specific
+            // shape around it. Checking that shape here avoids running the
+            // regular expression over the whole file.
+            let guard = self.literal_to_guard[m.pattern().as_usize()];
+            if !guard.holds(&bytes[m.end()..]) {
+                continue;
+            }
+            mask |= pat_mask;
         }
         mask
     }
@@ -126,16 +225,37 @@ fn prefilter() -> Option<&'static Prefilter> {
             // and every unique literal carries the mask of all its rules.
             let mut masks: std::collections::HashMap<&'static str, u64> =
                 std::collections::HashMap::new();
+            // The condition of a literal is only used when all the rules that
+            // use it agree on it.
+            let mut guards: std::collections::HashMap<&'static str, Guard> =
+                std::collections::HashMap::new();
+            let mut conflicting: std::collections::HashSet<&'static str> =
+                std::collections::HashSet::new();
             for (index, rule) in rules().iter().enumerate() {
                 for literal in rule.literals {
                     *masks.entry(literal).or_insert(0) |= 1u64 << index;
+                    match guards.get(literal) {
+                        None => {
+                            guards.insert(literal, rule.guard);
+                        }
+                        Some(existing) if *existing != rule.guard => {
+                            conflicting.insert(literal);
+                        }
+                        Some(_) => {}
+                    }
                 }
             }
             let mut patterns: Vec<&'static str> = Vec::with_capacity(masks.len());
             let mut literal_to_mask: Vec<u64> = Vec::with_capacity(masks.len());
+            let mut literal_to_guard: Vec<Guard> = Vec::with_capacity(masks.len());
             for (literal, mask) in masks {
                 patterns.push(literal);
                 literal_to_mask.push(mask);
+                literal_to_guard.push(if conflicting.contains(literal) {
+                    Guard::None
+                } else {
+                    guards.get(literal).copied().unwrap_or(Guard::None)
+                });
             }
             let ac = aho_corasick::AhoCorasickBuilder::new()
                 .match_kind(aho_corasick::MatchKind::Standard)
@@ -144,6 +264,7 @@ fn prefilter() -> Option<&'static Prefilter> {
             Some(Prefilter {
                 ac,
                 literal_to_mask,
+                literal_to_guard,
             })
         })
         .as_ref()
@@ -343,7 +464,7 @@ fn is_real_private_key_content(raw: &str) -> bool {
 fn rules() -> &'static Vec<Rule> {
     static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
     RULES.get_or_init(|| {
-        let specs: &[(&str, &str, &[&str], Head, Tail, Kind)] = &[
+        let specs: &[(&str, &str, &[&str], Head, Tail, Kind, Guard)] = &[
             // AWS secret access key (the access key id rule is disabled by
             // default upstream).
             (
@@ -353,6 +474,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::AwsSecret,
+                Guard::AwsAccess,
             ),
             // npm access token
             (
@@ -362,6 +484,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // npm OAuth token (only valid inside package.json)
             (
@@ -371,6 +494,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::Plain,
+                Guard::None,
             ),
             // npm auth token (only valid inside .npmrc)
             (
@@ -380,6 +504,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::Plain,
+                Guard::None,
             ),
             // Slack
             (
@@ -389,6 +514,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::Plain,
+                Guard::None,
             ),
             (
                 "slack",
@@ -397,6 +523,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::Plain,
+                Guard::None,
             ),
             // Basic auth credentials
             (
@@ -406,6 +533,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::BasicAuth,
+                Guard::BasicAuth,
             ),
             // OpenAI
             (
@@ -415,6 +543,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::Plain,
+                Guard::None,
             ),
             // Anthropic
             (
@@ -424,6 +553,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // Groq
             (
@@ -433,6 +563,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // Hugging Face
             (
@@ -442,6 +573,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlpha,
                 Kind::Plain,
+                Guard::None,
             ),
             // Linear
             (
@@ -451,6 +583,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // Notion
             (
@@ -460,6 +593,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // Private keys
             (
@@ -469,6 +603,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::PrivateKey,
+                Guard::None,
             ),
             // SendGrid
             (
@@ -478,6 +613,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::SendGrid,
+                Guard::None,
             ),
             // Shopify
             (
@@ -487,6 +623,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // Stripe
             (
@@ -496,6 +633,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // GitHub
             (
@@ -505,6 +643,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             (
                 "github",
@@ -513,6 +652,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             (
                 "github",
@@ -521,6 +661,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // GitLab
             (
@@ -530,6 +671,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // Grafana
             (
@@ -539,6 +681,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotBase64,
                 Kind::Plain,
+                Guard::None,
             ),
             (
                 "grafana",
@@ -547,6 +690,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // 1Password
             (
@@ -556,6 +700,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotBase64,
                 Kind::Plain,
+                Guard::None,
             ),
             // Database connection strings
             (
@@ -565,6 +710,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::DbConn,
+                Guard::Scheme(&["://", "+srv://", "x://", "ql://"]),
             ),
             (
                 "database-connection-string",
@@ -573,6 +719,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::DbConn,
+                Guard::Scheme(&["://", "+srv://", "x://", "ql://"]),
             ),
             (
                 "database-connection-string",
@@ -581,6 +728,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::Any,
                 Tail::Any,
                 Kind::DbConn,
+                Guard::Scheme(&["://", "+srv://", "x://", "ql://"]),
             ),
             // HashiCorp Vault
             (
@@ -590,6 +738,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             (
                 "hashicorp-vault",
@@ -598,6 +747,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             (
                 "hashicorp-vault",
@@ -606,6 +756,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // Vercel
             (
@@ -615,6 +766,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // Databricks
             (
@@ -624,6 +776,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // Docker
             (
@@ -633,6 +786,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // Figma
             (
@@ -642,6 +796,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
             // Cloudflare
             (
@@ -651,6 +806,7 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotAlnum,
                 Kind::Plain,
+                Guard::None,
             ),
             // Tailscale
             (
@@ -660,17 +816,19 @@ fn rules() -> &'static Vec<Rule> {
                 Head::NotLetter,
                 Tail::NotWord,
                 Kind::Plain,
+                Guard::None,
             ),
         ];
         specs
             .iter()
-            .map(|(name, pattern, literals, head, tail, kind)| Rule {
+            .map(|(name, pattern, literals, head, tail, kind, guard)| Rule {
                 name,
                 pattern,
                 literals,
                 head: *head,
                 tail: *tail,
                 kind: *kind,
+                guard: *guard,
                 re: OnceLock::new(),
             })
             .collect()
@@ -748,6 +906,29 @@ pub fn count_issues(content: &str) -> usize {
     scan(content, "file.txt").len()
 }
 
+/// All the literals of the rules, de-duplicated.
+///
+/// Exposed for the benchmark: it compares the aho-corasick implementations.
+pub fn rule_literals() -> Vec<&'static str> {
+    let mut literals: Vec<&'static str> = Vec::new();
+    for rule in rules() {
+        for literal in rule.literals {
+            if !literals.contains(&literal) {
+                literals.push(literal);
+            }
+        }
+    }
+    literals
+}
+/// The number of rules that the prefilter considers possible for a content.
+///
+/// Exposed for the benchmark: it measures the prefilter on its own.
+pub fn candidate_rule_count(content: &str) -> usize {
+    let Some(prefilter) = prefilter() else {
+        return 0;
+    };
+    prefilter.candidate_rules(content).count_ones() as usize
+}
 /// Scan a file and describe the issues that were found.
 pub fn scan_file(file_path: &str, content: &str) -> Option<SecurityResult> {
     let messages = scan(content, file_path);
@@ -992,6 +1173,18 @@ mod tests {
         v.push("mongodb://user:Str0ngPassw0rd@host.example.com/db".into());
         v.push("mysql://user:Str0ngPassw0rd@host.example.com/db".into());
         v.push("postgres://user:Str0ngPassw0rd@host.example.com/db".into());
+        // The other spellings of the database schemes.
+        v.push("mongodb+srv://user:Str0ngPassw0rd@host.example.com/db".into());
+        v.push("mysqlx://user:Str0ngPassw0rd@host.example.com/db".into());
+        v.push("postgresql://user:Str0ngPassw0rd@host.example.com/db".into());
+        v.push("jdbc:mysql://user:Str0ngPassw0rd@host.example.com/db".into());
+        // The other schemes of the basic auth rule.
+        v.push("ftp://admin:Xy9kQ2mZpL4rT7w@mycompany.io/x".into());
+        v.push("ftps://admin:Xy9kQ2mZpL4rT7w@mycompany.io/x".into());
+        v.push("http://admin:Xy9kQ2mZpL4rT7w@mycompany.io/x".into());
+        // The other spellings of the AWS access key.
+        v.push("secret_access_key = \"abcdefghij0123456789ABCDEFGHIJ0123456789\"".into());
+        v.push("SecretAccessKey=abcdefghij0123456789ABCDEFGHIJ0123456789".into());
         v.push(format!("hvs.{}", "a".repeat(90)));
         v.push(format!("hvb.{}", "a".repeat(138)));
         v.push(format!("hvr.{}", "a".repeat(90)));
@@ -1032,6 +1225,82 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The index of the rule with the given pattern fragment.
+    fn rule_index(pattern_fragment: &str) -> usize {
+        rules()
+            .iter()
+            .position(|rule| rule.pattern.contains(pattern_fragment))
+            .unwrap_or_else(|| panic!("no rule with the pattern {pattern_fragment:?}"))
+    }
+
+    /// The guard must not hide a rule that matches.
+    ///
+    /// The guard is only allowed to reject a literal occurrence when the
+    /// rule provably cannot match there. This test takes the samples of every
+    /// guarded rule and checks that the prefilter still finds the rule.
+    #[test]
+    fn the_guard_never_hides_a_matching_rule() {
+        let pf = prefilter().expect("prefilter");
+        let guarded: Vec<(usize, &str)> = rules()
+            .iter()
+            .enumerate()
+            .filter(|(_, rule)| rule.guard != Guard::None)
+            .map(|(index, rule)| (index, rule.name))
+            .collect();
+        assert!(!guarded.is_empty(), "no rule has a guard");
+
+        for sample in samples() {
+            let mask = pf.candidate_rules(&sample);
+            for (index, name) in &guarded {
+                let rule = &rules()[*index];
+                let Some(re) = rule.regex() else { continue };
+                if re.find(&sample).is_some() {
+                    assert!(
+                        mask & (1u64 << index) != 0,
+                        "the guarded rule '{name}' (#{index}) matches {:?} but the guard excluded it",
+                        sample
+                    );
+                }
+            }
+        }
+    }
+
+    /// The guard has to reject the shapes that occur in almost every file.
+    ///
+    /// This is the point of the guard: without it, every file with a URL
+    /// would run the basic auth regular expression from the beginning to the
+    /// end.
+    #[test]
+    fn the_guard_rejects_the_common_shapes() {
+        let pf = prefilter().expect("prefilter");
+
+        let basicauth = rule_index("(?:https?|ftp|ftps)://");
+        let aws = rule_index("AWS|aws|Aws");
+        let mongodb = rule_index("mongodb");
+        let postgres = rule_index("postgres");
+        let mysql = rule_index("mysql");
+
+        let cases: &[(&str, &str, usize)] = &[
+            (
+                "const url = 'https://example.com/path';",
+                "basicauth",
+                basicauth,
+            ),
+            ("const clientSecret = 'value';", "aws", aws),
+            ("// the mongodb driver is used here", "mongodb", mongodb),
+            ("// postgres and mysql are supported", "postgres", postgres),
+            ("// postgres and mysql are supported", "mysql", mysql),
+        ];
+        for (sample, name, index) in cases {
+            let mask = pf.candidate_rules(sample);
+            assert_eq!(
+                mask & (1u64 << index),
+                0,
+                "the {name} rule should have been filtered out for {sample:?}"
+            );
         }
     }
 

@@ -239,16 +239,19 @@ pub fn pack(
     phase!("security");
     // --- Process the content ---------------------------------------------
     progress("Processing files...");
+    // The content is moved into the processing, not copied: the raw files
+    // are not needed any more, and a copy of the whole repository is the
+    // biggest allocation of a run.
     let processed = raw_files
-        .par_iter()
+        .into_par_iter()
         .filter_map(|file| {
-            let content = file.content.as_ref()?;
+            let content = file.content?;
             if suspicious_paths.contains(&file.path) {
                 return None;
             }
             let processed_content = process_content(&file.path, content, cfg);
             Some(ProcessedFile {
-                path: file.path.clone(),
+                path: file.path,
                 content: processed_content,
             })
         })
@@ -369,9 +372,11 @@ pub fn pack(
 }
 
 /// Apply the content transformations in Repomix's order.
-pub fn process_content(path: &str, content: &str, cfg: &Config) -> String {
+///
+/// The content is taken by value and changed in place, so that the normal
+/// case does not allocate a copy of the file.
+pub fn process_content(path: &str, mut content: String, cfg: &Config) -> String {
     let ext = extension_of(path);
-    let mut content = content.to_string();
 
     // 1. Remove comments.
     if cfg.output.remove_comments {
@@ -398,7 +403,7 @@ pub fn process_content(path: &str, content: &str, cfg: &Config) -> String {
     }
 
     // 5. Trim.
-    content = output::style_utils::js_trim(&content).to_string();
+    output::style_utils::js_trim_in_place(&mut content);
 
     // 6. Add line numbers.
     if cfg.output.show_line_numbers {

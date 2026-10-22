@@ -34,6 +34,64 @@ enum ClassItem {
     Range(char, char),
 }
 
+/// The literal parts of a path segment.
+///
+/// A segment pattern like `*.log` has the suffix `.log`, and a segment
+/// pattern like `node_modules` is a literal. Both are *necessary* for a
+/// match, so they can be used to skip a pattern without running the
+/// matcher.
+#[derive(Debug, Clone, Default)]
+struct SegmentShape {
+    /// The whole segment, when it has no wildcards.
+    literal: Option<String>,
+    /// The literal part at the beginning.
+    prefix: Option<String>,
+    /// The literal part at the end.
+    suffix: Option<String>,
+}
+
+impl SegmentShape {
+    /// The shape of a compiled segment.
+    fn of(tokens: &[Token]) -> Self {
+        let literal = literal_of(tokens);
+        if literal.is_some() {
+            return SegmentShape {
+                literal,
+                prefix: None,
+                suffix: None,
+            };
+        }
+        SegmentShape {
+            literal: None,
+            prefix: leading_literal(tokens),
+            suffix: trailing_literal(tokens),
+        }
+    }
+
+    /// Can the shape be used as a condition?
+    fn is_usable(&self) -> bool {
+        self.literal.is_some() || self.prefix.is_some() || self.suffix.is_some()
+    }
+
+    /// Can this segment match the shape?
+    fn matches(&self, segment: &str) -> bool {
+        if let Some(literal) = &self.literal {
+            return segment == literal;
+        }
+        if let Some(prefix) = &self.prefix {
+            if !segment.starts_with(prefix.as_str()) {
+                return false;
+            }
+        }
+        if let Some(suffix) = &self.suffix {
+            if !segment.ends_with(suffix.as_str()) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// A compiled glob pattern.
 #[derive(Debug, Clone)]
 pub struct Pattern {
@@ -49,6 +107,17 @@ pub struct Pattern {
     /// True when a trailing `/**` requires an actual slash because the
     /// preceding segment ends in a wildcard.
     trailing_needs_slash: bool,
+    /// A literal segment that has to be somewhere in the path.
+    ///
+    /// This is the case for patterns like `**/node_modules/**`: the path has
+    /// to contain the segment `node_modules`.
+    required_shape: Option<SegmentShape>,
+    /// The shape of the last segment of the pattern.
+    ///
+    /// The last segment of a path has to match the last segment of the
+    /// pattern, so the literal parts of that segment are a condition for
+    /// every path.
+    last_shape: Option<SegmentShape>,
 }
 
 /// A set of patterns; a path matches when *any* pattern matches.
@@ -88,7 +157,16 @@ impl PatternSet {
             return false;
         }
         let segments = crate::util::path::split_segments(path);
-        self.patterns.iter().any(|p| p.matches(&segments))
+        self.is_match_segments(&segments)
+    }
+
+    /// Does any pattern in the set match the given path segments?
+    ///
+    /// The caller can split the path once and use it for several sets.
+    pub fn is_match_segments(&self, segments: &[&str]) -> bool {
+        self.patterns
+            .iter()
+            .any(|pattern| pattern.may_match(segments) && pattern.matches(segments))
     }
 
     /// Could a directory at `dir` (given as path segments) possibly contain a
@@ -178,6 +256,36 @@ impl Pattern {
             },
         };
 
+        // A segment after the first globstar has to be somewhere in the path.
+        let mut required_shape = None;
+        let mut seen_globstar = false;
+        for segment in &segments {
+            match segment {
+                Segment::GlobStar => seen_globstar = true,
+                Segment::Pattern(tokens) => {
+                    if seen_globstar {
+                        let shape = SegmentShape::of(tokens);
+                        if shape.is_usable() {
+                            required_shape = Some(shape);
+                        }
+                    }
+                }
+            }
+        }
+
+        // The literal parts of the last segment.
+        let last_shape = match segments.last() {
+            Some(Segment::Pattern(tokens)) => {
+                let shape = SegmentShape::of(tokens);
+                if shape.is_usable() {
+                    Some(shape)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
         Some(Pattern {
             segments,
             min_depth,
@@ -185,7 +293,55 @@ impl Pattern {
             literal_prefix,
             has_globstar,
             trailing_needs_slash,
+            required_shape,
+            last_shape,
         })
+    }
+
+    /// A cheap check that has to succeed for the pattern to match.
+    ///
+    /// Every condition here is *necessary* for a match, so a pattern that
+    /// fails them can be skipped. The exact matcher still decides.
+    pub fn may_match(&self, segments: &[&str]) -> bool {
+        // The number of segments.
+        if segments.len() < self.min_depth {
+            return false;
+        }
+        if let Some(max) = self.max_depth {
+            if segments.len() != max {
+                return false;
+            }
+        }
+        // The literal prefix.
+        if !self.literal_prefix.is_empty() {
+            if segments.len() < self.literal_prefix.len() {
+                return false;
+            }
+            for (index, want) in self.literal_prefix.iter().enumerate() {
+                if segments[index] != want.as_str() {
+                    return false;
+                }
+            }
+        }
+        // A segment that has to be somewhere in the path.
+        if let Some(shape) = &self.required_shape {
+            if !segments.iter().any(|segment| shape.matches(segment)) {
+                return false;
+            }
+        }
+        // The last segment of the path.
+        if let Some(shape) = &self.last_shape {
+            match segments.last() {
+                Some(last) => {
+                    if !shape.matches(last) {
+                        return false;
+                    }
+                }
+                // The pattern needs a last segment, the path has none.
+                None => return false,
+            }
+        }
+        true
     }
 
     pub fn matches(&self, path_segments: &[&str]) -> bool {
@@ -225,6 +381,50 @@ impl Pattern {
             Some(max) => dir.len() + 1 <= max,
             None => true,
         }
+    }
+}
+
+/// The literal text of a segment, when it has no wildcards.
+fn literal_of(tokens: &[Token]) -> Option<String> {
+    let mut out = String::new();
+    for token in tokens {
+        match token {
+            Token::Char(c) => out.push(*c),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// The leading literal part of a segment.
+fn leading_literal(tokens: &[Token]) -> Option<String> {
+    let mut out = String::new();
+    for token in tokens {
+        match token {
+            Token::Char(c) => out.push(*c),
+            _ => break,
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// The trailing literal part of a segment.
+fn trailing_literal(tokens: &[Token]) -> Option<String> {
+    let mut out: Vec<char> = Vec::new();
+    for token in tokens.iter().rev() {
+        match token {
+            Token::Char(c) => out.push(*c),
+            _ => break,
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out.into_iter().rev().collect())
     }
 }
 
@@ -566,5 +766,78 @@ mod tests {
         assert_eq!(escape_glob_pattern("a(b)"), "a\\(b\\)");
         assert_eq!(normalize_glob_pattern("docs/"), "docs");
         assert_eq!(normalize_glob_pattern("**/dist"), "**/dist/**");
+    }
+
+    /// The cheap conditions must not change the result of the matcher.
+    ///
+    /// `may_match` is only allowed to reject a path that the exact matcher
+    /// would reject as well. This test checks that for every pattern of the
+    /// default ignore list and a list of paths.
+    #[test]
+    fn the_cheap_conditions_never_change_the_result() {
+        let paths = [
+            "a.txt",
+            "a/b.txt",
+            "a/b/c.txt",
+            "target",
+            "target/debug/x",
+            "a/target/debug/x",
+            "node_modules",
+            "node_modules/x",
+            "a/node_modules/x",
+            "a/node_modules/b/c",
+            ".git",
+            ".git/config",
+            "a/.git/config",
+            "package-lock.json",
+            "a/package-lock.json",
+            "a/b/package-lock.json",
+            "x.log",
+            "a/x.log",
+            "a/b/x.log",
+            "a/b/x.log.1",
+            "a/b/c.log",
+            "foo.pyc",
+            "a/foo.pyc",
+            "a/foo.pyo",
+            "a/foo.py",
+            "dist",
+            "dist/x",
+            "a/dist/x",
+            "build/Release/x",
+            "a/build/Release/x",
+            "npm-debug.log",
+            "a/yarn-error.log",
+            "repomix-output.xml",
+            "a/repomix-output.xml",
+            "Cargo.lock",
+            "a/Cargo.lock",
+            "a/b/Cargo.lock.orig",
+            "a/b/Cargo.toml.orig",
+            "src/main.rs",
+            "src\\main.rs",
+            "",
+            "a//b",
+            ".",
+            "..",
+            "a/..",
+        ];
+        let patterns: Vec<String> = crate::core::search::DEFAULT_IGNORE_LIST
+            .iter()
+            .map(|p| crate::util::glob::normalize_glob_pattern(p))
+            .collect();
+        for pattern in &patterns {
+            let compiled = Pattern::compile(pattern)
+                .unwrap_or_else(|| panic!("the pattern {pattern:?} does not compile"));
+            for path in &paths {
+                let segments = crate::util::path::split_segments(path);
+                let exact = compiled.matches(&segments);
+                let fast = compiled.may_match(&segments) && exact;
+                assert_eq!(
+                    exact, fast,
+                    "the cheap conditions changed the result for {pattern:?} and {path:?}"
+                );
+            }
+        }
     }
 }

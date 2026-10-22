@@ -142,6 +142,21 @@ impl Matchers {
         false
     }
 
+    /// Is the file at `rel_path` part of the pack?
+    ///
+    /// The path is split into its segments once, and the result is used for
+    /// all the pattern sets.
+    pub fn check_file(&self, rel_path: &str) -> bool {
+        let segments = crate::util::path::split_segments(rel_path);
+        if self.ignore.is_match_segments(&segments)
+            || self.deferred.is_match_segments(&segments)
+            || (!self.deferred_dir.is_empty() && self.deferred_dir.is_match_segments(&segments))
+        {
+            return false;
+        }
+        self.include.is_match_segments(&segments)
+    }
+
     /// Should the directory at `rel_path` be pruned from the walk?
     pub fn should_prune_dir(&self, rel_path: &str) -> bool {
         self.ignore.prunes_dir(rel_path)
@@ -349,10 +364,9 @@ pub fn search_files(root: &Path, cfg: &Config) -> Result<SearchOutcome> {
             continue;
         }
         let t0 = std::time::Instant::now();
-        let ignored = matchers.is_ignored(&rel);
-        let included = !ignored && matchers.is_included(&rel);
+        let included = matchers.check_file(&rel);
         t_match += t0.elapsed();
-        if ignored || !included {
+        if !included {
             continue;
         }
         file_paths.push(rel);

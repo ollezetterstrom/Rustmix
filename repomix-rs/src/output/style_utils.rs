@@ -209,6 +209,25 @@ pub fn js_trim(text: &str) -> &str {
     text.trim_matches(is_js_whitespace)
 }
 
+/// Trim in place, without allocating a copy.
+///
+/// The content of every file is trimmed, so this saves a copy of the whole
+/// repository.
+pub fn js_trim_in_place(text: &mut String) {
+    // The trailing whitespace.
+    let end = text.trim_end_matches(is_js_whitespace).len();
+    // The leading whitespace.
+    let start = text.len() - text.trim_start_matches(is_js_whitespace).len();
+    if start > 0 {
+        text.drain(..start);
+    }
+    // `end` was measured from the old beginning of the string.
+    let end = end.saturating_sub(start);
+    if end < text.len() {
+        text.truncate(end);
+    }
+}
+
 /// Trim in place and append the trailing newline, without allocating a copy.
 ///
 /// This is the allocation free equivalent of `format!("{}\n", js_trim(&out))`.
