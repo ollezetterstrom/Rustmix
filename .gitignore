@@ -16,3 +16,6 @@ repomix-output.*
 
 # Generated bundle (rebuild with build-bundle.ps1)
 /repomix-rs-SOURCE.md
+
+# The packed repository (regenerate with repomix . -o Rustmix.xml)
+/Rustmix.xml
