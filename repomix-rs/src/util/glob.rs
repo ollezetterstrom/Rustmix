@@ -463,7 +463,7 @@ fn match_segments(pat: &[Segment], path: &[&str], trailing_needs_slash: bool) ->
             if path.is_empty() {
                 return false;
             }
-            if !match_tokens(tokens, path[0].as_bytes()) {
+            if !match_tokens(tokens, path[0]) {
                 return false;
             }
             match_segments(&pat[1..], &path[1..], trailing_needs_slash)
@@ -472,25 +472,28 @@ fn match_segments(pat: &[Segment], path: &[&str], trailing_needs_slash: bool) ->
 }
 
 /// Match a single path segment against a compiled token list.
-fn match_tokens(tokens: &[Token], text: &[u8]) -> bool {
+///
+/// The text is matched by characters, not by bytes: a `?` matches one
+/// character (and not one byte of a multi byte character), and a literal
+/// character in the pattern is compared with its UTF-8 encoding.
+fn match_tokens(tokens: &[Token], text: &str) -> bool {
     // Iterative backtracking matcher.
-    fn go(tokens: &[Token], text: &[u8], ti: usize, xi: usize) -> bool {
+    fn go(tokens: &[Token], text: &str, ti: usize, xi: usize) -> bool {
         if ti == tokens.len() {
             return xi == text.len();
         }
         match &tokens[ti] {
             Token::Char(c) => {
-                if xi < text.len() && text[xi] == *c as u8 {
-                    go(tokens, text, ti + 1, xi + 1)
+                if text[xi..].starts_with(*c) {
+                    go(tokens, text, ti + 1, xi + c.len_utf8())
                 } else {
                     false
                 }
             }
             Token::Any => {
-                if xi < text.len() {
-                    go(tokens, text, ti + 1, xi + 1)
-                } else {
-                    false
+                match text[xi..].chars().next() {
+                    Some(c) => go(tokens, text, ti + 1, xi + c.len_utf8()),
+                    None => false,
                 }
             }
             Token::Star => {
@@ -503,23 +506,21 @@ fn match_tokens(tokens: &[Token], text: &[u8]) -> bool {
                     if k >= text.len() {
                         return false;
                     }
-                    k += 1;
+                    k += text[k..].chars().next().map_or(1, char::len_utf8);
                 }
             }
-            Token::Class { negated, items } => {
-                if xi < text.len() && class_matches(items, text[xi], *negated) {
-                    go(tokens, text, ti + 1, xi + 1)
-                } else {
-                    false
+            Token::Class { negated, items } => match text[xi..].chars().next() {
+                Some(c) if class_matches(items, c, *negated) => {
+                    go(tokens, text, ti + 1, xi + c.len_utf8())
                 }
-            }
+                _ => false,
+            },
         }
     }
     go(tokens, text, 0, 0)
 }
 
-fn class_matches(items: &[ClassItem], b: u8, negated: bool) -> bool {
-    let c = b as char;
+fn class_matches(items: &[ClassItem], c: char, negated: bool) -> bool {
     let mut hit = false;
     for item in items {
         match item {
@@ -766,6 +767,26 @@ mod tests {
         assert_eq!(escape_glob_pattern("a(b)"), "a\\(b\\)");
         assert_eq!(normalize_glob_pattern("docs/"), "docs");
         assert_eq!(normalize_glob_pattern("**/dist"), "**/dist/**");
+    }
+
+    /// A `?` matches a character and not a byte.
+    ///
+    /// The reference implementation matches with `picomatch`, which works on
+    /// characters - so a pattern like `???.ts` matches a file name with
+    /// three characters, no matter how many bytes they need.
+    #[test]
+    fn matches_characters_and_not_bytes() {
+        assert!(matches("???.ts", "abc.ts"));
+        assert!(matches("???.ts", "åäö.ts"));
+        assert!(!matches("???.ts", "ab.ts"));
+        assert!(!matches("???.ts", "abcd.ts"));
+        // A literal character in the pattern.
+        assert!(matches("åäö.ts", "åäö.ts"));
+        assert!(!matches("åäö.ts", "abc.ts"));
+        assert!(matches("*åäö*", "xåäöy"));
+        // A character class.
+        assert!(matches("[åäö].ts", "å.ts"));
+        assert!(!matches("[åäö].ts", "a.ts"));
     }
 
     /// The cheap conditions must not change the result of the matcher.
