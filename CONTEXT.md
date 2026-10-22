@@ -128,60 +128,93 @@ Corpus A = `C:\Users\ozett\AppData\Local\npm-cache\_npx\cad0f0e99bf115c9\node_mo
 
 | Implementation | Wall time | Notes |
 |---|---|---|
-| **repomix-rs** | **407 ms** | no cache, every run identical |
+| **repomix-rs** | **364 ms** | no cache, every run identical |
 | repomix (TS) | 2 425 ms | **with warm token-count disk cache** |
-| repomix (TS) | 4 951 ms | **cold token-count cache** (the honest "first run" number) |
+| repomix (TS) | 5 145 ms | **cold token-count cache** (the honest "first run" number) |
 
-> **Speedup: 6.0× (warm) / 12.2× (cold).** The project goal (10–30×) is met
+> **Speedup: 6.7× (warm) / 14.2× (cold).** The project goal (10–30×) is met
 > against the cold-cache comparison.
+
+The **default run** (the output goes to a file and the report is printed, so
+the metrics phase runs) went from **1 568 ms to 930 ms** with the
+optimisations of §4.2.
 
 ### Cold start
 
-`repomix.exe --version` → **6.2 – 7.1 ms** (best of 5). Target <15 ms: **met**.
+`repomix.exe --version` → **6.8 – 7.2 ms** (best of 5). Target <15 ms: **met**.
 
 ### Phase breakdown (Corpus A, single run, `REPOMIX_TIMING=1`)
 
 ```
-[timing]   walk=87ms match=19ms sort=4ms files=6907
-[timing] search                    99.0ms
-[timing] setup                    100.6ms
-[timing] read                     146.0ms
-[timing] security                 199.3ms
-[timing] process                  206.4ms
-[timing] sort                     209.9ms
-[timing] render                   222.3ms
-[timing] metrics                  222.4ms     <- skipped (--stdout)
+[timing]   walk=78ms match=5.5ms sort=4ms files=6907
+[timing] search                    83.0ms
+[timing] setup                    85.0ms
+[timing] read                     130.0ms
+[timing] security                 183.0ms
+[timing] process                  183.5ms
+[timing] sort                     187.0ms
+[timing] render                   199.0ms
+[timing] metrics                  199.0ms     <- skipped (--stdout)
+[timing] pack (in run)            205.0ms
+[timing] write output             110.0ms
+[timing] total (in main)          316.0ms
 ```
 
-With the report enabled (metrics consumed) the metrics phase is **~1 050 ms**
-(94 ms of that is the BPE table build, now overlapped with the file I/O).
+The `REPOMIX_TIMING` output also reports the time outside of `main()` (the
+process start and the teardown of the address space); `measure-teardown.ps1`
+compares it with the wall clock.
 
 ### Where the time goes now
 
-1. **Directory walk — 88 ms.** Pure syscall bound (`readdir` + `stat` for
+1. **Directory walk — 78 ms.** Pure syscall bound (`readdir` + `stat` for
    6 907 files and ~2 500 directories). Parallelising the `ignore` crate's
    walker gave **no** improvement; this is the floor for a stat-based walk.
 2. **Reading — 45 ms.** `std::fs::read` on 6 907 files.
-3. **Secret scan — 54 ms** (parallel). Was 146 ms without a prefilter.
+3. **Secret scan — 53 ms** (parallel). Was 146 ms without a prefilter.
 4. **Render — 12 ms.** Was 93 ms.
-5. **Writing the 65 MB to stdout — ~175 ms.** A single `write_all`; the cost
+5. **Writing the 65 MB to stdout — ~105 ms.** A single `write_all`; the cost
    is the pipe transfer, and the TS pays it too.
-6. **Fixed costs (paid by every run, independent of corpus size):**
+6. **Process teardown — 49 ms** outside of `main()`. The operating system
+   unmaps the 172 MB of address space when the process exits; skipping the
+   `free()` of the result (`mem::forget`) does not change it.
+7. **Fixed costs (paid by every run, independent of corpus size):**
    - regex compilation of the security rules: **122 ms → 1.4 ms** (lazy
      compilation, §5).
    - BPE table build: 94 ms → hidden behind the file I/O.
 
-### 4.2 What was measured and rejected
+### 4.2 The metrics phase (the report path)
 
-Four further optimisations were implemented and measured on Corpus A. Only
-the ones that paid off were kept:
+The default run (`repomix .`, which writes the file **and** prints the
+report) is the one a user actually sees, and it is dominated by the token
+counting. The phase went from **1 433 ms to 872 ms**:
+
+| Part | Before | After | What was done |
+|---|---|---|---|
+| Per-file token counts | 760 ms | 700 ms | identical contents are only counted once (1 519 of the 6 907 files are duplicates) and the largest file is handed to the thread pool first |
+| Per-file UTF-16 length | 232 ms | ~10 ms | it was counted **sequentially** over the whole corpus; it is now counted in the same parallel pass and derived from the bytes instead of decoding the text |
+| The wrapper | 138 ms | ~15 ms | `str::find` builds a two-way searcher for every needle (as much work as the whole corpus); it is now searched with `memchr` and compared directly |
+| The output | 29 ms | 29 ms | the UTF-16 length of the rendered output |
+
+**The token counting itself is the floor.** `tiktoken-rs` spends ~70 % of its
+time in the `fancy_regex` pre-tokenisation of the `o200k_base` pattern, and
+that part cannot be replaced without reimplementing the BPE as well (the
+merger and the rank table are private in `tiktoken-rs`). See §8.
+
+### 4.3 What was measured and rejected
+
+Further optimisations were implemented and measured on Corpus A. Only the
+ones that paid off were kept:
 
 | Idea | Result |
 |---|---|
-| **Content de-duplication** in the token counting (group identical files, tokenise each body once) | **Rejected.** Only 6 % of the corpus bytes are duplicates (1 519 of 6 924 files, 5.1 MB of 84.9 MB), so hashing 85 MB would cost more than the ~60 ms it saves. |
+| **Content de-duplication** in the token counting (group identical files, tokenise each body once) | **Kept, but only with an O(1) fingerprint.** Hashing all 85 MB costs more than the ~60 ms it saves; grouping by (length, first and last eight bytes) and comparing the contents only inside a group costs < 0.2 ms and saves the 60 ms. |
 | **"All of" literals** for the basic-auth rule (`"://"` *and* `"@"`) | **Neutral** (53 ms vs 54 ms). Kept out - it made the literal set fragile (see §5.3). |
 | **`regex::RegexSet` instead of `aho-corasick`** for the prefilter | **Rejected.** The SIMD matcher is 2.7× faster on one large file (2.2 vs 0.83 GB/s), but a repository has many small files, and every set needs its own iterator: the security phase went from 54 ms to **84 ms** (8 sets) or **91 ms** (1 set). |
 | **Parallel directory walk** (`WalkBuilder::threads`) | **Rejected.** No measurable difference - the walk is syscall bound. |
+| **A window filter in the security prefilter** (only run a rule when the text around its literal has the right shape) | **Kept, but it is not the win it looks like.** It cuts the number of candidate rules from 1 295 to 81 and the time of the rules from 72 ms to 55 ms (single threaded, ~6 ms in parallel) - but the prefilter itself (the aho-corasick pass over 65 MB) is 64 % of the security phase and is not affected by it. |
+| **`regex` instead of `aho-corasick` for the prefilter** | **Not implemented (yet).** The `regex` crate's lazy DFA scans the corpus 2.2× faster (35 ms vs 98 ms single threaded, 5.7 ms vs 13.6 ms in parallel), but every match needs a hash lookup to find its rule, and the whole gain is ~6 ms of a 380 ms run. |
+| **Skipping the `free()` of the result at the end of the CLI** (`mem::forget`) | **Kept, but it does not show up in the wall clock.** The `free()` itself costs 8 ms, but the operating system unmaps the address space either way, and that is the 49 ms that the process spends outside of `main()`. |
+| **A hand written pre-tokeniser for the `o200k_base` pattern** | **Rejected for now.** It would remove ~70 % of the token counting, but the BPE merge and the rank table are private in `tiktoken-rs`, so the whole encoder would have to be reimplemented - and the token count has to match the reference exactly. See §8. |
 
 ### 4.1 Benchmark methodology (READ THIS — the harness was broken before)
 
@@ -265,7 +298,15 @@ is a real repository and therefore not committed.
   before `config` while `a` sorts before `A`. Implemented in
   `util/path.rs::locale_cmp`. The optimised (allocation-free) version is
   proven equivalent to the original by a unit test that compares both
-  implementations over 900 input pairs.
+  implementations over 1 600 input pairs.
+  The Unicode Collation Algorithm has **three** levels - the base letter
+  (primary), the accent (secondary) and the case (tertiary) - so `åäö.ts`
+  sorts with the `a` files and not behind the `z` files. The decomposition
+  table was generated from the Unicode data. The reference implementation
+  calls `localeCompare()` *without* a locale, so its result for accented
+  characters depends on the locale of the machine (en-SE here); the root
+  collation is used here, which is identical for the ASCII characters and
+  for the base letters of the accented ones.
 * **`sortPaths` segment comparison**: at the first differing segment, a path
   that *ends* there sorts *after* one that continues (files below their
   directory).
@@ -291,6 +332,14 @@ is a real repository and therefore not committed.
   **This is a correctness requirement, not just an optimisation:** counting
   the whole output merges tokens across the file boundaries and reported
   663 tokens where the reference reports 660.
+  The **wrapper** itself is counted as a whole (the reference counts it with
+  `runTokenCount`, which does not split it), while the **output** of the slow
+  path is counted in 200 000 character chunks (the reference counts it with
+  `calculateOutputMetrics`, which does). The per-file counts are never
+  chunked. Mixing those up changes the reported total.
+  The `indexOf` of the reference finds the *first* occurrence of the content
+  at or after the cursor - even when that is not the place where the file
+  was rendered. That behaviour is reproduced on purpose.
 * **Character counts are UTF-16 code units**, because the reference is
   JavaScript and `String.length` counts UTF-16 units. Counting Unicode
   scalar values reported 1 759 characters where the reference reports
@@ -356,13 +405,27 @@ is a real repository and therefore not committed.
 * **The order of the files was not preserved while reading them**: zipping
   two parallel iterators produces an iterator that is not *indexed*, and
   collecting from it does not keep the order.
+* **The token total of the slow path was wrong** (the file token counts were
+  added to the count of the whole output): the reference implementation only
+  sums the per-file counts on the fast path.
+* **The wrapper was counted in chunks**, the reference implementation counts
+  it as a whole - a wrapper of more than one megabyte reported a slightly
+  different number.
+* **The glob matcher compared bytes instead of characters**: a `?` matched a
+  single byte, and a non-ASCII character in a pattern was truncated to its
+  last byte. A file named `åäö.ts` was therefore never matched by
+  `--include "???.ts"`.
+* **The path sort put every accented character behind `z`**: the collation
+  only had one level, so `åäö.ts` was listed after `zebra.txt` while the
+  reference implementation lists it before. The Unicode Collation Algorithm
+  has three levels (the base letter, the accent and the case).
 
 ---
 
 ## 6. Verification commands
 
 ```powershell
-# unit + integration tests (53)
+# unit + integration tests (64)
 cd repomix-rs; cargo test --release
 
 # output differential: 26 flag combinations vs npx repomix (byte comparison)
@@ -382,15 +445,40 @@ cd repomix-rs; cargo test --release
 # benchmark (Rust vs npx). NOTE: npx must be invoked through cmd.exe.
 .\bench.ps1 -Target C:\Users\ozett\AppData\Local\npm-cache\_npx\cad0f0e99bf115c9\node_modules -Runs 3
 
+# the wall clock of both paths, with the phase breakdown
+.\measure.ps1 -Runs 3
+
+# how much of the run is the process start and the teardown
+.\measure-teardown.ps1 -Runs 3
+
+# the peak memory of the process
+.\measure-memory.ps1 -Runs 3
+
 # phase timings
 $env:REPOMIX_TIMING="1"; repomix.exe --stdout 2>timing.txt > out.xml
 
+# the time the allocator needs for the result (the CLI skips it)
+$env:REPOMIX_TIMING_DROP="1"; repomix.exe --stdout 2>timing.txt > out.xml
+
 # micro-benchmarks of the hot primitives
-cargo build --release --bin bench_prims
+cargo build --release --features dev --bin bench_prims
 .\target\release\bench_prims.exe <some-file>
 
+# the token counting: the regex pre-tokenisation vs the BPE, and the
+# different scheduling strategies
+cargo build --release --features dev --bin bench_tok
+.\target\release\bench_tok.exe <a directory>
+
+# the secret scan: the prefilter vs the rules
+cargo build --release --features dev --bin bench_sec
+.\target\release\bench_sec.exe <a directory>
+
+# the collation of the path sort, next to the reference implementation
+cargo build --release --features dev --bin collcmp
+.\target\release\collcmp.exe
+
 # per-rule regex compile cost
-cargo build --release --bin regexbench
+cargo build --release --features dev --bin regexbench
 .\target\release\regexbench.exe
 ```
 
@@ -405,6 +493,8 @@ To clear the TS token cache (for cold-cache comparisons):
 clap 4.6 (derive)      ignore 0.4      globset 0.4      rayon 1.12
 tiktoken-rs 0.12       simdutf8 0.1    tree-sitter 0.27 + 17 grammars
 serde/serde_json/json5 regex 1.13      aho-corasick 1 (new: security prefilter)
+memchr 2.7 (new: the substring search of the wrapper, the XML escaping
+             and the markdown delimiter)
 arboard 3.7            anyhow  thiserror  log 0.4  env_logger 0.11
 unicode-width 0.2
 ```
@@ -418,6 +508,8 @@ libraries (`kernel32`, `advapi32`, `ntdll`, `user32`, `userenv`) and needs
 neither the Visual C++ redistributable nor a Node runtime. **Cargo reads
 `.cargo/config.toml` from the *working directory*, so the build has to run
 inside the crate directory** - `install.ps1` and `cargo install` both do.
+The static flags are scoped to the MSVC target, so the Linux and macOS
+builds are not affected.
 
 **Dependency policy:** adding a small, well-maintained crate is acceptable
 (`aho-corasick`, `memchr`, `rayon` are already in the tree transitively).
@@ -427,28 +519,48 @@ Avoid anything that would change observable behaviour.
 
 ## 8. Known open issues / risks
 
-* **The directory walk (88 ms) is syscall bound.** The `ignore` crate's
+* **The token counting is the remaining bottleneck of the report path.**
+  ~700 ms of the 930 ms of a default run is the BPE of 65 MB. 70 % of that
+  is the `fancy_regex` pre-tokenisation of the `o200k_base` pattern inside
+  `tiktoken-rs` (the crate's own source says "most of the time is spent in
+  regex"). A hand written pre-tokeniser would remove it, but the BPE merge
+  and the rank table are private in `tiktoken-rs`, so the whole encoder
+  would have to be reimplemented (including the `o200k_base.tiktoken`
+  asset) - and the token count has to match the reference exactly. The
+  measurements for it are in `src/bin/bench_tok.rs`.
+* **The directory walk (78 ms) is syscall bound.** The `ignore` crate's
   parallel walker made no difference. A hand-written walker that avoids the
   per-entry `stat` (by using `read_dir` + `file_type`) might, but that would
   mean reimplementing `.gitignore` handling.
 * **`util/glob.rs` is a hand-written backtracking matcher.** It is correct for
   the cases that matter, but it is O(patterns × path segments) per file. It
-  now only accounts for 19 ms of the 99 ms search phase, so it is *not* worth
-  optimising further. `globset` cannot be swapped in blindly: its `**`
+  now only accounts for 5.5 ms of the 83 ms search phase (the cheap
+  necessary conditions of §4.3 skip most of the patterns), so it is *not*
+  worth optimising further. `globset` cannot be swapped in blindly: its `**`
   semantics differ from picomatch's.
 * **The `aho-corasick` prefilter is a correctness-critical optimisation.** It
-  relies on every rule having a *necessary* literal. Three unit tests guard
+  relies on every rule having a *necessary* literal. Four unit tests guard
   this: `prefilter_never_hides_a_matching_rule` (for every rule and every
   sample, a rule that matches must be in the prefilter's mask),
   `every_match_contains_one_of_its_literals` (every match contains one of the
-  rule's literals) and `no_literal_hides_another_one` (no literal may occur
+  rule's literals), `no_literal_hides_another_one` (no literal may occur
   inside another one - aho-corasick's leftmost-first semantics report the
-  *shortest* match and would hide the longer one). **Any new rule must come
-  with a literal and a sample.**
+  *shortest* match and would hide the longer one) and
+  `the_guard_never_hides_a_matching_rule` (the shape check around a literal
+  must not hide a rule that matches). **Any new rule must come with a
+  literal and a sample.**
+* **The glob matcher compares characters, not bytes.** A `?` matches one
+  character and a literal character in a pattern is compared with its UTF-8
+  encoding, like the `picomatch` of the reference implementation. The
+  collation of the path sort is a three level approximation of the ICU root
+  collation; the reference implementation uses `localeCompare()` *without* a
+  locale, so its result for accented characters depends on the locale of the
+  machine.
 * **The metrics phase is skipped when its result is not consumed**
   (`--stdout`, `--quiet`, no `--token-budget`). The library API keeps
   `Config::need_metrics = true` by default, so `pack()` still returns full
   metrics for library users.
+
 * `panic = "abort"` means any panic kills the process — there is no error
   recovery. Two panics were found and fixed in 2026-10-21; more may lurk.
 * `core/comments.rs` diverges from `strip-comments` in edge cases (accepted).
@@ -463,13 +575,13 @@ Avoid anything that would change observable behaviour.
 * The `ignore` crate's `is_git_repository` probe was removed from the git
   helpers (it doubled the number of process spawns and `git log`/`git diff`
   fail in exactly the same situations).
-* **Not implemented: content de-duplication in the metrics phase.** A
-  `node_modules` tree contains many identical files (`LICENSE`, repeated
-  `.d.ts`), and each copy is tokenised separately - but only 6 % of the bytes
-  are duplicates, so hashing the content would cost roughly as much as it
-  saves. Deliberately left out, see §4.2.
+* **Content de-duplication in the metrics phase is implemented** (with the
+  O(1) fingerprint, see §4.3). A `node_modules` tree contains many identical
+  files (`LICENSE`, repeated `.d.ts`), and each copy used to be tokenised
+  separately.
 
 ---
+
 
 ## 9. What I want from you
 

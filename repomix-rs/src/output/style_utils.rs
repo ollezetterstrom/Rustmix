@@ -169,17 +169,31 @@ pub fn language_from_file_path(file_path: &str) -> &'static str {
 }
 
 /// Escape text for inclusion in XML.
+///
+/// The five characters that have to be escaped are all ASCII, and an ASCII
+/// character never appears inside a multi byte UTF-8 sequence - so the text
+/// can be copied in blocks between the special characters.
 pub fn escape_xml(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            c => out.push(c),
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    let mut last = 0usize;
+    for (index, &byte) in bytes.iter().enumerate() {
+        let escaped = match byte {
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'"' => "&quot;",
+            b'\'' => "&apos;",
+            _ => continue,
+        };
+        if last < index {
+            out.push_str(&text[last..index]);
         }
+        out.push_str(escaped);
+        last = index + 1;
+    }
+    if last < text.len() {
+        out.push_str(&text[last..]);
     }
     out
 }

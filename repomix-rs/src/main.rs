@@ -226,11 +226,14 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
         }
     }
 
-    // The teardown of the result frees ~90 MB of file content and the ~65 MB
-    // output. The operating system is about to tear the whole address space
-    // down anyway, so the time is measured separately to see how much of the
-    // run is spent in the allocator.
-    if timing {
+    // The result holds ~90 MB of file content and the ~65 MB output. The
+    // process exits right away, so the memory does not have to be freed one
+    // block at a time - the operating system reclaims the whole address
+    // space at once.
+    //
+    // The library API is not affected: `pack()` still returns the result and
+    // frees it normally.
+    if std::env::var_os("REPOMIX_TIMING_DROP").is_some() {
         let t_drop = std::time::Instant::now();
         drop(result);
         eprintln!(
@@ -238,6 +241,8 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
             "teardown (drop)",
             t_drop.elapsed().as_secs_f64() * 1000.0
         );
+    } else {
+        std::mem::forget(result);
     }
 
     Ok(0)

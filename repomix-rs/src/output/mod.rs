@@ -49,19 +49,24 @@ pub struct RenderContext<'a> {
 ///
 /// The longest run of backticks anywhere in the content determines the fence
 /// length; at least three backticks are always used.
+///
+/// The backticks are searched with `memchr`, so the whole content does not
+/// have to be walked character by character.
 pub fn calculate_markdown_delimiter(contents: &[&str]) -> String {
     let mut max_backticks = 0usize;
     for content in contents {
-        let mut run = 0usize;
-        for c in content.chars() {
-            if c == '`' {
-                run += 1;
-                if run > max_backticks {
-                    max_backticks = run;
-                }
-            } else {
-                run = 0;
+        let bytes = content.as_bytes();
+        let mut start = 0usize;
+        while let Some(offset) = memchr::memchr(b'`', &bytes[start..]) {
+            let first = start + offset;
+            let mut end = first + 1;
+            while end < bytes.len() && bytes[end] == b'`' {
+                end += 1;
             }
+            if end - first > max_backticks {
+                max_backticks = end - first;
+            }
+            start = end;
         }
     }
     "`".repeat(std::cmp::max(3, max_backticks + 1))

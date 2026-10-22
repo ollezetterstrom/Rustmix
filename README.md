@@ -16,9 +16,9 @@ single document by Repomix.
 ...
 ```
 
-- **12.2x faster** than `npx repomix` (402 ms vs 4 916 ms on a 6 907 file
+- **14.2x faster** than `npx repomix` (364 ms vs 5 145 ms on a 6 907 file
   repository)
-- **3.7x less memory** (196 MB vs 722 MB peak)
+- **3.9x less memory** (172 MB vs 722 MB peak)
 - **One self-contained binary** - 32.7 MB, no Node runtime, no Visual C++
   redistributable, nothing left behind on disk
 - **Byte-identical output**, verified against the original implementation by
@@ -112,9 +112,9 @@ into a 62 MB document. The full methodology is in
 
 | | Rustmix | Repomix (TypeScript) | |
 |---|---|---|---|
-| Runtime | **402 ms** | 4 916 ms | **12.2x** |
-| Runtime, reference with a warm token cache | **402 ms** | 2 403 ms | **6.0x** |
-| Peak memory | **196 MB** | 722 MB | **3.7x less** |
+| Runtime | **364 ms** | 5 145 ms | **14.2x** |
+| Runtime, reference with a warm token cache | **364 ms** | 2 425 ms | **6.7x** |
+| Peak memory | **172 MB** | 722 MB | **3.9x less** |
 | Cold start | **7 ms** | ~400 ms | |
 | Install footprint | one 32.7 MB file | Node + 6 925 files / 87 MB | |
 | Files left on disk | none | a token cache in `%TEMP%` | |
@@ -126,7 +126,7 @@ still faster than the original with its cache warm.
 
 ```bash
 cd repomix-rs
-cargo test --release                # 55 unit and integration tests
+cargo test --release                # 64 unit and integration tests
 ```
 
 The differential suites compare against the original implementation and need
