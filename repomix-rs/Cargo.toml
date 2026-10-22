@@ -30,8 +30,27 @@ name = "regexbench"
 path = "src/bin/regexbench.rs"
 required-features = ["dev"]
 
+[[bin]]
+name = "bench_tok"
+path = "src/bin/bench_tok.rs"
+required-features = ["dev"]
+
+[[bin]]
+name = "tokdiff"
+path = "src/bin/tokdiff.rs"
+required-features = ["dev"]
+
+[[bin]]
+name = "tokprefix"
+path = "src/bin/tokprefix.rs"
+required-features = ["dev"]
+
 [features]
-dev = []
+dev = ["dep:fancy-regex"]
+
+[dependencies.fancy-regex]
+version = "0.19"
+optional = true
 
 [dependencies]
 # CLI
@@ -43,6 +62,9 @@ globset = "0.4"
 rayon = "1.12"
 # Token counting
 tiktoken-rs = "0.12"
+# SIMD substring search (the memchr crate is already in the tree via aho-corasick)
+memchr = "2.7"
+# Regex pre-tokenisation (dev only: used to verify the fast pre-tokeniser)
 # SIMD UTF-8 validation
 simdutf8 = "0.1"
 # Tree-sitter parsing for --compress

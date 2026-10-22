@@ -282,28 +282,51 @@ pub fn pack(
     // check, so it can be skipped entirely when neither is active.
     let metrics = if cfg.need_metrics {
         progress("Calculating metrics...");
-        let file_metrics =
-            crate::core::metrics::calculate_file_metrics(&processed, cfg.token_encoding);
-        let total_characters: usize = crate::core::metrics::utf16_len(&output);
+        // The per file counts and the output count are independent of each
+        // other, so they are calculated at the same time. The output count
+        // walks over the whole rendered output, the per file counts are
+        // spread over all the threads.
+        let fast_path = crate::core::metrics::can_use_fast_output_token_path(cfg);
+        let (file_metrics, (total_characters, output_tokens)) = rayon::join(
+            || crate::core::metrics::calculate_file_metrics(&processed, cfg.token_encoding),
+            || {
+                let total_characters = crate::core::metrics::utf16_len(&output);
 
-        // The reference implementation does not tokenize the whole output
-        // again: it sums the per-file token counts and adds the tokens of the
-        // "wrapper" (everything that is not file content). This is both much
-        // cheaper and the only way to reproduce the reference token total
-        // exactly - counting the whole output would merge tokens across the
-        // file boundaries.
-        let total_tokens = if crate::core::metrics::can_use_fast_output_token_path(cfg) {
-            match crate::core::metrics::extract_output_wrapper(&output, &processed) {
-                Some(wrapper) => {
-                    let file_tokens_sum: usize = file_metrics.iter().map(|m| m.tokens).sum();
-                    file_tokens_sum
-                        + crate::core::metrics::count_tokens_chunked(&wrapper, cfg.token_encoding)
-                }
-                None => crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding),
-            }
+                // The reference implementation does not tokenize the whole
+                // output again when the fast path is available: it sums the
+                // per-file token counts and adds the tokens of the "wrapper"
+                // (everything that is not file content). This is both much
+                // cheaper and the only way to reproduce the reference token
+                // total exactly - counting the whole output would merge
+                // tokens across the file boundaries.
+                //
+                // The wrapper itself is counted as a whole (the reference
+                // implementation does not split it into chunks), while the
+                // output of the slow path is chunked.
+                let tokens = if fast_path {
+                    match crate::core::metrics::extract_output_wrapper(&output, &processed) {
+                        Some(wrapper) => {
+                            crate::core::metrics::count_tokens(&wrapper, cfg.token_encoding)
+                        }
+                        None => {
+                            crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
+                        }
+                    }
+                } else {
+                    crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
+                };
+                (total_characters, tokens)
+            },
+        );
+
+        // The fast path adds the per file counts to the wrapper count, the
+        // slow path counts the whole output on its own.
+        let total_tokens = if fast_path {
+            file_metrics.iter().map(|m| m.tokens).sum::<usize>() + output_tokens
         } else {
-            crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
+            output_tokens
         };
+
         let git_diff_tokens = crate::core::metrics::count_tokens_chunked(
             &format!(
                 "{}{}",

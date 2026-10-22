@@ -14,6 +14,8 @@ use clap::Parser;
 
 
 fn main() {
+    let process_start = std::time::Instant::now();
+    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
     let args: Vec<String> = std::env::args().collect();
     let mut normalized: Vec<String> = vec![args[0].clone()];
     normalized.extend(cli::normalize_optional_value_args(&args[1..]));
@@ -27,7 +29,16 @@ fn main() {
     };
 
     match run(cli) {
-        Ok(code) => std::process::exit(code),
+        Ok(code) => {
+            if timing {
+                eprintln!(
+                    "[timing] {:<22} {:>8.1}ms",
+                    "total (in main)",
+                    process_start.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            std::process::exit(code)
+        }
         Err(err) => {
             eprintln!("\u{2716} {err}");
             std::process::exit(1);
@@ -81,6 +92,8 @@ fn read_stdin_paths(cwd: &std::path::Path) -> Result<Vec<PathBuf>> {
 }
 
 fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
+    let t_run = std::time::Instant::now();
 
     // Load the configuration file (if any).
     let config_path = config::find_config_file(&cwd, cli.config.as_deref());
@@ -130,6 +143,13 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
     };
 
     let result = packager::pack(&root_dirs, &cfg, &mut progress)?;
+    if timing {
+        eprintln!(
+            "[timing] {:<22} {:>8.1}ms",
+            "pack (in run)",
+            t_run.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 
     // --- Write the output ------------------------------------------------
     let mut output_files: Vec<PathBuf> = Vec::new();
@@ -148,7 +168,15 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
             output_files.push(part.file_path.clone());
         }
     } else {
+        let t_write = std::time::Instant::now();
         output_files = output::writer::write_output(&cfg, &result.output)?;
+        if timing {
+            eprintln!(
+                "[timing] {:<22} {:>8.1}ms",
+                "write output",
+                t_write.elapsed().as_secs_f64() * 1000.0
+            );
+        }
     }
 
     if cfg.output.copy_to_clipboard {
@@ -196,6 +224,20 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
             );
             return Ok(1);
         }
+    }
+
+    // The teardown of the result frees ~90 MB of file content and the ~65 MB
+    // output. The operating system is about to tear the whole address space
+    // down anyway, so the time is measured separately to see how much of the
+    // run is spent in the allocator.
+    if timing {
+        let t_drop = std::time::Instant::now();
+        drop(result);
+        eprintln!(
+            "[timing] {:<22} {:>8.1}ms",
+            "teardown (drop)",
+            t_drop.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     Ok(0)
