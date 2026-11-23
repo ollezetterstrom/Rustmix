@@ -1,107 +1,106 @@
 # AGENT.md - Rustmix Developer & AI Agent Guide
 
-## 1. Project Overview
+> **Note for Future AI Agents:** This document explains both the internal code architecture and the external ecosystem/release mechanics for **Rustmix**. Read this before touching releases, packaging, or distribution.
+
+---
+
+## 1. Project Overview & Pivot History
 - **Project Name:** Rustmix (formerly repomix-rs)
 - **Repository:** [https://github.com/ollezetterstrom/Rustmix](https://github.com/ollezetterstrom/Rustmix)
-- **Core Purpose:** Ultra-fast, high-density codebase packer designed for frontier reasoning LLMs (Gemini 2.5 Pro, Claude 3.7 Sonnet, OpenAI o3).
-- **Core Principles:** Maximum token density, native Rust execution speed (zero JS/Node runtime overhead), zero-friction cross-platform installation.
+- **Crate Directory:** `repomix-rs/`
+- **Core Mission:** Ultra-fast, high-density codebase packer for frontier reasoning models (Gemini 2.5 Pro, Claude 3.7 Sonnet, OpenAI o3).
+- **The Pivot (v2.0.0):** The project previously maintained 1:1 bug-for-bug compatibility with JavaScript Repomix. In v2.0.0, we pivoted away from JS parity to achieve:
+  1. **Maximum Token Density:** Terse delimiters, BPE whitespace optimization, automatic content deduplication, and minified blob truncation.
+  2. **Maximum Raw Speed:** Dropped JS UTF-16 collation, fused pipeline passes into single parallel Rayon scans, and stream buffered output directly to disk.
+  3. **Zero-Dependency Native Distribution:** Dropped heavy Node.js runtime wrappers in favor of standalone binary distribution for Windows, Linux, and macOS.
 
 ---
 
-## 2. Architecture & Key Features
+## 2. Code Architecture & Core Innovations
 
-### Compact LLM-First Output (`--style compact`, Default)
-- **Terse Delimiters:** Uses `=== path/to/file.rs` delimiters instead of verbose XML/Handlebars tags.
-- **O(1) Content Fingerprint Deduplication:** Identical files (e.g. repeated vendor files, licenses) are fingerprinted via fast hashes and emitted as `=== path/b (duplicate of path/a)` rather than repeating contents.
-- **Indentation Compression:** Leading 4-space indentation is automatically converted to tabs (`\t`) in `compact` mode (1 token per indent level for BPE tokenizers).
-- **Blob Truncation:** Long inline SVG path data (`<path d="...">`) and minified single lines (> 500 characters) are truncated to prevent token window pollution.
-- **Smart Compression:** `--smart-compress [N]` uses Git change frequency (`src/core/git.rs`) to retain the top N (default 10) most-edited files in full while AST compressing the rest of the codebase with Tree-sitter.
+### LLM-First Compact Output (`--style compact`, Default)
+- **File Delimiters:** Terse `=== path/to/file.rs` header instead of verbose XML blocks.
+- **O(1) Content Deduplication:** (`src/core/metrics.rs` & `src/output/compact.rs`): Files with identical content hashes emit `=== path/b (duplicate of path/a)` instead of duplicating tokens.
+- **Whitespace Token Optimization:** (`src/core/indent.rs`): Replaces leading 4 spaces with tabs (`\t`), reducing BPE indentation tokens by up to 75% while keeping visual structure intact.
+- **Blob Truncation:** (`src/core/base64.rs`): Truncates long inline SVG paths (`<path d="...">` > 60 chars) and minified single lines (> 500 chars).
+- **Smart Compression:** (`--smart-compress [N]`): Uses Git commit counts (`src/core/git.rs`) to keep the top N most-edited files in full context while Tree-sitter compressing the rest (`src/core/compress.rs`).
 
-### Speed & Performance Optimizations
-- **Fused Rayon Pipeline:** File reading, security scanning (regex/Aho-Corasick), and content processing are merged into a single parallel pass in `src/core/packager.rs` so memory stays CPU cache-hot.
-- **Streaming Output:** Writes directly to disk or stdout via `BufWriter` with `CountingWriter` instead of building multi-megabyte strings in RAM.
-- **Fast Token Estimation:** Defaults to fast byte estimate (`bytes / 3.8`) for console reports to avoid ~870ms of BPE overhead. Exact tiktoken counting is auto-enabled when `--exact-tokens`, `--token-budget`, or `--token-count-tree` is used.
-- **Native Lexicographical Collation:** Replaced JavaScript UTF-16 localeCompare collation with native Rust path ordering.
-
----
-
-## 3. Distribution & Release Guide
-
-Rustmix is distributed through two channels:
-1. **Cargo / crates.io:** For any developer with Rust installed (`cargo install rustmix`).
-2. **GitHub Releases:** Standalone pre-compiled zero-dependency binaries for Windows, Linux, and macOS (installed via one-line shell / PowerShell scripts).
-
-### Step A: Publishing to Crates.io (`cargo publish`)
-- **What it does:** Uploads the crate to [crates.io/crates/rustmix](https://crates.io/crates/rustmix). Anyone can immediately run `cargo install rustmix`.
-- **Command:**
-  ```bash
-  cargo publish --manifest-path repomix-rs/Cargo.toml
-  ```
-- **Requirements:**
-  - Token in `~/.cargo/credentials.toml` (created Nov 23, 2026, expires Nov 23, 2027; details in local `token-info.txt`).
-  - Verified email on crates.io: [https://crates.io/settings/profile](https://crates.io/settings/profile).
-
-### Step B: Git Tagging & GitHub Actions Release
-- **What it does:** Tags a release version in Git and pushes it to GitHub. This triggers the GitHub Actions workflow in `.github/workflows/release.yml`.
-- **What GitHub Actions does automatically:**
-  - Starts 5 cloud runners in parallel.
-  - Builds release binaries for:
-    - `x86_64-pc-windows-msvc` (with static CRT `/MT` + `+crt-static`, zero DLL dependencies)
-    - `x86_64-unknown-linux-gnu`
-    - `aarch64-unknown-linux-gnu` (native on `ubuntu-24.04-arm`)
-    - `aarch64-apple-darwin` (Apple Silicon M-series)
-    - `x86_64-apple-darwin` (Intel Mac)
-  - Packages Windows `.zip` and Unix `.tar.gz` standalone archives.
-  - Publishes them as a GitHub Release at `https://github.com/ollezetterstrom/Rustmix/releases`.
-- **Command:**
-  ```bash
-  git tag v<version>
-  git push origin v<version>
-  # Example:
-  git tag v2.0.0
-  git push origin v2.0.0
-  ```
-- **When to do Step B:**
-  - Tell Gemini CLI to run Step B whenever you are ready to ship a public release binary to end users.
-  - Once Step B completes, the one-line installer scripts and `rustmix update` automatically fetch and install the new version.
+### High-Speed Fused Pipeline
+- **Fused Rayon Pass:** File reading, secret detection (Aho-Corasick + regex in `src/core/security.rs`), and content processing occur in a single parallel Rayon pass in `src/core/packager.rs`.
+- **Buffered Output Streaming:** Writes directly to disk/stdout via `BufWriter` (`src/output/writer.rs`) with `CountingWriter`, avoiding multi-megabyte allocations.
+- **Fast Byte Token Estimation:** Defaults to `bytes / 3.8` for console reports. Exact tiktoken counting is auto-enabled when `--exact-tokens`, `--token-budget`, or `--token-count-tree` is passed.
+- **Native Lexicographical Collation:** Standard `a.cmp(b)` in `src/util/path.rs` (replaced slow UTF-16 JS `localeCompare`).
 
 ---
 
-## 4. Install & Update Commands
+## 3. Distribution Ecosystem (Outside the Code)
 
-### End-User Installation:
-- **Cargo (Fastest & Native):**
+### Why Not npm? (Context for Future AIs)
+npm enforces mandatory Two-Factor Authentication (2FA) and strict organization scoping for package publishing. To keep Rustmix completely zero-dependency and eliminate JavaScript runtime requirements, Rustmix is distributed natively as compiled binaries and via Cargo.
+
+### Channel 1: GitHub Releases (Standalone Binaries)
+- **Workflow:** `.github/workflows/release.yml`
+- **Trigger:** Pushing any Git tag matching `v*` (e.g., `v2.0.0`).
+- **Target Matrix:**
+  1. `x86_64-pc-windows-msvc` (built with static CRT `/MT` + `+crt-static` in `repomix-rs/.cargo/config.toml` so it requires zero Visual C++ DLLs).
+  2. `x86_64-unknown-linux-gnu`
+  3. `aarch64-unknown-linux-gnu` (runs native on `ubuntu-24.04-arm`)
+  4. `aarch64-apple-darwin` (Apple Silicon M-series)
+  5. `x86_64-apple-darwin` (Intel Mac)
+- **Artifacts:** Standalone `.zip` for Windows and `.tar.gz` for Linux/macOS uploaded to GitHub Releases.
+
+### Channel 2: Homebrew (macOS & Linux)
+- **Tap Repository:** `ollezetterstrom/homebrew-rustmix`
+- **Install Command:**
   ```bash
-  cargo install rustmix
+  brew install ollezetterstrom/rustmix/rustmix
+  # or:
+  brew tap ollezetterstrom/rustmix && brew install rustmix
   ```
-- **Linux & macOS (Zero dependencies):**
+- **Update Command:**
+  ```bash
+  brew upgrade rustmix
+  ```
+
+### Channel 3: One-Line Installers (Zero Dependencies)
+- **Linux & macOS:**
   ```bash
   curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh
   ```
-- **Windows (PowerShell, zero dependencies):**
+- **Windows (PowerShell):**
   ```powershell
   irm https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.ps1 | iex
   ```
 
-### Updating:
-```bash
-rustmix update
-```
-*(Built directly into the binary — invokes the platform installer to replace the current binary with the latest GitHub release).*
+### Channel 4: Built-in Self-Updater
+- **Command:** `rustmix update`
+- **Mechanism:** Built into `src/main.rs`. Invokes the platform's installer script to download the latest binary from GitHub Releases and replace the running binary in-place.
+
+### Channel 5: Cargo / crates.io
+- **Install Command:** `cargo install rustmix`
+- **Publish Command:** `cargo publish --manifest-path repomix-rs/Cargo.toml`
+- **Credentials:** Token stored in `~/.cargo/credentials.toml` (created Nov 23, 2026, expires Nov 23, 2027; metadata recorded in local `token-info.txt`).
+- **Prerequisite:** Email verification on [crates.io/settings/profile](https://crates.io/settings/profile).
 
 ---
 
-## 5. Development & Testing Commands
-- **Run all unit/integration tests:**
-  ```bash
-  cargo test --release --manifest-path repomix-rs/Cargo.toml
-  ```
-- **Dry-run publish check:**
-  ```bash
-  cargo publish --dry-run --manifest-path repomix-rs/Cargo.toml
-  ```
-- **Verify binary locally:**
-  ```bash
-  ./repomix-rs/target/release/rustmix --version
-  ./repomix-rs/target/release/rustmix . -o rustmix-output.txt
-  ```
+## 4. Release Checklist for Future AI Agents
+
+When the user requests a new release (e.g. `v2.0.1` or `v2.1.0`):
+
+1. **Bump Version:**
+   - Update `version = "X.Y.Z"` in `repomix-rs/Cargo.toml`.
+   - Update `Cargo.lock` by running `cargo check --manifest-path repomix-rs/Cargo.toml`.
+2. **Run Tests:**
+   - Run `cargo test --release --manifest-path repomix-rs/Cargo.toml` (must pass 100%).
+   - Run `cargo publish --dry-run --manifest-path repomix-rs/Cargo.toml`.
+3. **Commit & Push to Main:**
+   - `git commit -am "chore: release vX.Y.Z"`
+   - `git push origin main`
+4. **Trigger GitHub Cloud Builds:**
+   - `git tag vX.Y.Z`
+   - `git push origin vX.Y.Z`
+5. **Publish to Crates.io:**
+   - `cargo publish --manifest-path repomix-rs/Cargo.toml`
+6. **Update Homebrew Formula (if needed):**
+   - Calculate sha256 checksums of the release archives and update `Formula/rustmix.rb` in `ollezetterstrom/homebrew-rustmix`.
