@@ -49,7 +49,17 @@ npm enforces mandatory Two-Factor Authentication (2FA) and strict organization s
   5. `x86_64-apple-darwin` (Intel Mac)
 - **Artifacts:** Standalone `.zip` for Windows and `.tar.gz` for Linux/macOS uploaded to GitHub Releases.
 
-### Channel 2: Homebrew (macOS & Linux)
+### Channel 2: Windows Package Manager (winget)
+- **Package Identifier:** `ollezetterstrom.Rustmix`
+- **Moniker / Alias:** `rustmix`
+- **Install Command:**
+  ```powershell
+  winget install rustmix
+  ```
+- **PR Status:** [microsoft/winget-pkgs#487407](https://github.com/microsoft/winget-pkgs/pull/487407) (Pending Microsoft merge)
+- **Manifest Location in `microsoft/winget-pkgs`:** `manifests/o/ollezetterstrom/Rustmix/2.0.0/`
+
+### Channel 3: Homebrew (macOS & Linux)
 - **Tap Repository:** `ollezetterstrom/homebrew-rustmix`
 - **Install Command:**
   ```bash
@@ -62,7 +72,7 @@ npm enforces mandatory Two-Factor Authentication (2FA) and strict organization s
   brew upgrade rustmix
   ```
 
-### Channel 3: One-Line Installers (Zero Dependencies via GitHub Pages / olle.gay)
+### Channel 4: One-Line Installers (Zero Dependencies via GitHub Pages / olle.gay)
 - **Linux & macOS:**
   ```bash
   curl -sSfL olle.gay/Rustmix/install.sh | sh
@@ -72,11 +82,12 @@ npm enforces mandatory Two-Factor Authentication (2FA) and strict organization s
   irm olle.gay/Rustmix/install.ps1 | iex
   ```
 
-### Channel 4: Built-in Self-Updater
+### Channel 5: Built-in Self-Updater
 - **Command:** `rustmix update`
 - **Mechanism:** Built into `src/main.rs`. Invokes the platform's installer script to download the latest binary from GitHub Releases and replace the running binary in-place.
 
-### Channel 5: Cargo / crates.io
+### Channel 6: Cargo / crates.io
+- **Status:** **LIVE** at [crates.io/crates/rustmix](https://crates.io/crates/rustmix) (v2.0.0 published Nov 23, 2026).
 - **Install Command:** `cargo install rustmix`
 - **Publish Command:** `cargo publish --manifest-path repomix-rs/Cargo.toml`
 - **Credentials:** Token stored in `~/.cargo/credentials.toml` (created Nov 23, 2026, expires Nov 23, 2027; metadata recorded in local `token-info.txt`).

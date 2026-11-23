@@ -34,9 +34,9 @@ pub fn pack() { ... }
 
 ## ⚡ Installation
 
-### Homebrew (macOS & Linux — Recommended)
+### Cargo (Cross-Platform)
 ```bash
-brew install ollezetterstrom/rustmix/rustmix
+cargo install rustmix
 ```
 
 ### Windows (PowerShell — Fresh PC, zero dependencies)
@@ -44,14 +44,20 @@ brew install ollezetterstrom/rustmix/rustmix
 irm olle.gay/Rustmix/install.ps1 | iex
 ```
 
+### Windows Package Manager (winget)
+> *PR pending in [microsoft/winget-pkgs#487407](https://github.com/microsoft/winget-pkgs/pull/487407)*
+```powershell
+winget install rustmix
+```
+
 ### Linux & macOS (Shell — Fresh PC, zero dependencies)
 ```bash
 curl -sSfL olle.gay/Rustmix/install.sh | sh
 ```
 
-### Cargo
+### Homebrew (macOS & Linux)
 ```bash
-cargo install rustmix
+brew install ollezetterstrom/rustmix/rustmix
 ```
 
 ### Standalone GitHub Releases
