@@ -28,11 +28,11 @@ impl OutputStyle {
     /// Default output filename for this style.
     pub fn default_file_name(self) -> &'static str {
         match self {
-            OutputStyle::Compact => "repomix-output.txt",
-            OutputStyle::Xml => "repomix-output.xml",
-            OutputStyle::Markdown => "repomix-output.md",
-            OutputStyle::Json => "repomix-output.json",
-            OutputStyle::Plain => "repomix-output.txt",
+            OutputStyle::Compact => "rustmix-output.txt",
+            OutputStyle::Xml => "rustmix-output.xml",
+            OutputStyle::Markdown => "rustmix-output.md",
+            OutputStyle::Json => "rustmix-output.json",
+            OutputStyle::Plain => "rustmix-output.txt",
         }
     }
 }
@@ -71,12 +71,12 @@ impl TokenEncoding {
     }
 }
 
-/// Repomix - Pack your repository into a single AI-friendly file
+/// Rustmix - Pack your repository into a single AI-friendly file
 #[derive(Debug, Parser)]
 #[command(
-    name = "repomix",
+    name = "rustmix",
     version,
-    about = "Repomix - Pack your repository into a single AI-friendly file",
+    about = "Rustmix - Pack your repository into a single AI-friendly file",
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -248,11 +248,11 @@ pub struct Cli {
     // ------------------------------------------------------------------
     // Configuration Options
     // ------------------------------------------------------------------
-    /// Use custom config file instead of repomix.config.json
+    /// Use custom config file instead of rustmix.config.json
     #[arg(short = 'c', long, value_name = "path")]
     pub config: Option<String>,
 
-    /// Create a new repomix.config.json file with defaults
+    /// Create a new rustmix.config.json file with defaults
     #[arg(long)]
     pub init: bool,
 

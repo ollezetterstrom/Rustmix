@@ -12,6 +12,6 @@ fn main() {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let issues = repomix_rs::core::security::count_issues(&content);
+    let issues = rustmix::core::security::count_issues(&content);
     println!("{name}\t{issues}");
 }

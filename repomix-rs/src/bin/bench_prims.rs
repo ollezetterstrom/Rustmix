@@ -1,9 +1,9 @@
 //! Micro-benchmarks for the hot primitives.
 use std::time::Instant;
 
-use repomix_rs::core::metrics;
-use repomix_rs::core::security;
-use repomix_rs::util::binary;
+use rustmix::core::metrics;
+use rustmix::core::security;
+use rustmix::util::binary;
 
 fn bench<T>(label: &str, iters: u32, mut f: impl FnMut() -> T) {
     // warmup
@@ -61,6 +61,6 @@ fn main() {
 
     // --- token counting via the crate API -----------------------------------
     bench("metrics::count_tokens", 20, || {
-        metrics::count_tokens(&content, repomix_rs::cli::TokenEncoding::O200kBase)
+        metrics::count_tokens(&content, rustmix::cli::TokenEncoding::O200kBase)
     });
 }

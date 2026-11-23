@@ -82,7 +82,7 @@ pub fn pack(
     cfg: &Config,
     progress: &mut dyn FnMut(&str),
 ) -> Result<PackResult> {
-    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
+    let timing = std::env::var_os("RUSTMIX_TIMING").or_else(|| std::env::var_os("REPOMIX_TIMING")).is_some();
     let t0 = std::time::Instant::now();
 
     // The tokenizer tables are built lazily; building them takes ~85 ms.

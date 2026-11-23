@@ -5,7 +5,7 @@
 Rustmix packs your repository into a token-optimized single file, built for frontier AI models like Gemini 2.5 Pro, Claude 3.7 Sonnet, and OpenAI o3. It delivers **maximum token density** and **blazing speed** by ditching legacy JS overhead, streaming directly to disk, and deduplicating redundant contents.
 
 ```bash
-repomix .
+rustmix .
 ```
 
 ```
@@ -27,24 +27,37 @@ pub fn pack() { ... }
 - **Instant Console Reporting:** Defaults to fast byte-based token estimation (`bytes / 3.8`), dropping ~870ms of BPE overhead.
 - **Fused Pipeline & Streaming:** Merges file reading, security checks, and AST processing into a single parallel pass and streams directly to disk via `BufWriter` with minimal memory footprint.
 - **Smart Compression:** Keep your most frequently changed files in full context while Tree-sitter compressing the rest of the repo.
-- **Zero-Dependency One-Command Install:** Cross-platform single binaries for Windows, Linux, and macOS.
+- **Zero-Dependency One-Command Install:** Cross-platform single binaries for Windows, Linux, and macOS via npm, shell/PowerShell installers, or GitHub Releases.
 
 ---
 
 ## ⚡ Installation
 
-### Linux & macOS
+### Instant Run (npm / npx / bunx)
+Run anywhere instantly without manual setup:
+```bash
+npx @ollezetterstrom/rustmix@latest .
+# or with Bun:
+bunx @ollezetterstrom/rustmix@latest .
+```
+
+To install globally for instant 7ms native execution:
+```bash
+npm i -g @ollezetterstrom/rustmix@latest
+```
+
+### Linux & macOS (One-line Shell Installer)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh
 ```
 
-### Windows (PowerShell)
+### Windows (One-line PowerShell Installer)
 ```powershell
 irm https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.ps1 | iex
 ```
 
 ### GitHub Releases
-Grab the pre-compiled binary for your architecture from [GitHub Releases](https://github.com/ollezetterstrom/Rustmix/releases/latest):
+Grab the pre-compiled standalone binary for your architecture from [GitHub Releases](https://github.com/ollezetterstrom/Rustmix/releases/latest):
 - `x86_64-pc-windows-msvc` (Statically linked CRT, zero dependencies)
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
@@ -53,7 +66,7 @@ Grab the pre-compiled binary for your architecture from [GitHub Releases](https:
 
 ### Cargo
 ```bash
-cargo install --git https://github.com/ollezetterstrom/Rustmix.git repomix-rs
+cargo install --git https://github.com/ollezetterstrom/Rustmix.git --bin rustmix
 ```
 
 ---
@@ -61,16 +74,16 @@ cargo install --git https://github.com/ollezetterstrom/Rustmix.git repomix-rs
 ## 🚀 Usage
 
 ```bash
-repomix                                # Pack repo using default compact style -> repomix-output.txt
-repomix . --stdout                     # Stream output directly to stdout
-repomix . --smart-compress 10          # Keep top 10 most changed files in full, compress the rest
-repomix . --compress                   # Tree-sitter compress all compressible files
-repomix . --exact-tokens               # Count exact BPE tokens via tiktoken (instead of fast estimate)
-repomix . --style xml                  # Legacy Repomix XML output
-repomix . --style markdown             # Markdown output
-repomix . --token-budget 100000        # Error if output exceeds token budget (auto-enables exact tokens)
-repomix . --include "src/**"           # Include specific globs
-repomix . --ignore "**/*.test.*"       # Ignore patterns
+rustmix                                # Pack repo using default compact style -> rustmix-output.txt
+rustmix . --stdout                     # Stream output directly to stdout
+rustmix . --smart-compress 10          # Keep top 10 most changed files in full, compress the rest
+rustmix . --compress                   # Tree-sitter compress all compressible files
+rustmix . --exact-tokens               # Count exact BPE tokens via tiktoken (instead of fast estimate)
+rustmix . --style xml                  # XML output (<rustmix>)
+rustmix . --style markdown             # Markdown output
+rustmix . --token-budget 100000        # Error if output exceeds token budget (auto-enables exact tokens)
+rustmix . --include "src/**"           # Include specific globs
+rustmix . --ignore "**/*.test.*"       # Ignore patterns
 ```
 
 ---

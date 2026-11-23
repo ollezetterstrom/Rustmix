@@ -9,10 +9,17 @@
 /repomix-rs/target/
 
 # Generated output
+rustmix-output.*
 repomix-output.xml
 repomix-output.*
+/testdata/rustmix-output.*
 /testdata/repomix-output.xml
 /testdata/metrics-out.xml
+
+# npm binary drops during build/publish (keep .gitkeep)
+npm/**/bin/rustmix
+npm/**/bin/rustmix.exe
+npm/**/node_modules/
 
 # Generated bundle (rebuild with build-bundle.ps1)
 /repomix-rs-SOURCE.md

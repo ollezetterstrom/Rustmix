@@ -1,8 +1,9 @@
-use repomix_rs::util::glob::{normalize_glob_pattern, PatternSet};
+use rustmix::util::glob::{normalize_glob_pattern, PatternSet};
 
 #[test]
 fn debug_patterns() {
     for p in [
+        "**/rustmix-output.*",
         "**/repomix-output.*",
         "**/repopack-output.*",
         "**/package-lock.json",
@@ -12,8 +13,8 @@ fn debug_patterns() {
         let mut set = PatternSet::new();
         set.add(&normalized);
         println!(
-            "{p} -> {normalized} matches repomix-output.xml: {}",
-            set.is_match("repomix-output.xml")
+            "{p} -> {normalized} matches rustmix-output.txt: {}",
+            set.is_match("rustmix-output.txt")
         );
     }
 }

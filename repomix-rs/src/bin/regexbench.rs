@@ -5,7 +5,7 @@
 use std::time::Instant;
 
 use regex::Regex;
-use repomix_rs::core::security;
+use rustmix::core::security;
 
 fn main() {
     let patterns = security::rule_patterns();

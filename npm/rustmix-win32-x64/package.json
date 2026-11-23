@@ -1,0 +1,20 @@
+{
+  "name": "@ollezetterstrom/rustmix-win32-x64",
+  "version": "2.0.0",
+  "description": "Windows x64 binary for Rustmix",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ollezetterstrom/Rustmix.git"
+  },
+  "author": "Olle Zetterström",
+  "license": "MIT"
+}

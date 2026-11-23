@@ -165,7 +165,7 @@ pub fn report_completion() {
     println!("🎉 All Done!");
     println!("Your repository has been successfully packed.");
     println!();
-    println!("💡 Repomix is now available in your browser! Try it at https://repomix.com");
+    println!("💡 Rustmix: https://github.com/ollezetterstrom/Rustmix");
 }
 
 /// A node in the token count tree.

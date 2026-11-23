@@ -35,12 +35,12 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 
-URL="https://github.com/ollezetterstrom/Rustmix/releases/latest/download/repomix-${TARGET}.tar.gz"
-echo "==> Downloading repomix for ${TARGET}..."
-curl -fsSL "$URL" | tar -xz -C "$INSTALL_DIR" repomix
-chmod +x "$INSTALL_DIR/repomix"
+URL="https://github.com/ollezetterstrom/Rustmix/releases/latest/download/rustmix-${TARGET}.tar.gz"
+echo "==> Downloading rustmix for ${TARGET}..."
+curl -fsSL "$URL" | tar -xz -C "$INSTALL_DIR" rustmix
+chmod +x "$INSTALL_DIR/rustmix"
 
-echo "==> repomix installed successfully to $INSTALL_DIR/repomix"
+echo "==> rustmix installed successfully to $INSTALL_DIR/rustmix"
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;

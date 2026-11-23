@@ -1,0 +1,38 @@
+{
+  "name": "@ollezetterstrom/rustmix",
+  "version": "2.0.0",
+  "description": "Ultra-fast, high-density codebase packer for frontier reasoning models, written in Rust",
+  "bin": {
+    "rustmix": "bin/rustmix.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ollezetterstrom/Rustmix.git"
+  },
+  "keywords": [
+    "rustmix",
+    "repomix",
+    "codebase",
+    "llm",
+    "ai",
+    "packer",
+    "cli"
+  ],
+  "author": "Olle Zetterström",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/ollezetterstrom/Rustmix/issues"
+  },
+  "homepage": "https://github.com/ollezetterstrom/Rustmix#readme",
+  "optionalDependencies": {
+    "@ollezetterstrom/rustmix-win32-x64": "2.0.0",
+    "@ollezetterstrom/rustmix-linux-x64": "2.0.0",
+    "@ollezetterstrom/rustmix-linux-arm64": "2.0.0",
+    "@ollezetterstrom/rustmix-darwin-arm64": "2.0.0",
+    "@ollezetterstrom/rustmix-darwin-x64": "2.0.0"
+  }
+}

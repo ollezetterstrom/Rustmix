@@ -90,7 +90,7 @@ pub fn generate_header(cfg: &Config) -> String {
         )
     };
 
-    format!("{description}, combined into a single document by Repomix.\n{processing_info}")
+    format!("{description}, combined into a single document by Rustmix.\n{processing_info}")
         .trim()
         .to_string()
 }
@@ -156,7 +156,7 @@ pub fn generate_summary_usage_guidelines(cfg: &Config, has_instruction: bool) ->
 pub fn generate_summary_notes(cfg: &Config) -> String {
     let info = analyze_content(cfg);
     let mut notes = vec![
-        "- Some files may have been excluded based on .gitignore rules and Repomix's configuration".to_string(),
+        "- Some files may have been excluded based on .gitignore rules and Rustmix's configuration".to_string(),
         "- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files".to_string(),
     ];
     if info.include {
@@ -235,7 +235,7 @@ mod tests {
         let header = generate_header(&cfg);
         assert_eq!(
             header,
-            "This file is a merged representation of the entire codebase, combined into a single document by Repomix."
+            "This file is a merged representation of the entire codebase, combined into a single document by Rustmix."
         );
     }
 

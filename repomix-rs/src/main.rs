@@ -1,12 +1,12 @@
-//! Repomix - a high performance, drop-in compatible codebase packer.
+//! Rustmix - an ultra-fast codebase packer for frontier reasoning models.
 
 use std::path::PathBuf;
 
-use repomix_rs::cli::{self, Cli};
-use repomix_rs::config::{self, Config};
-use repomix_rs::core::packager;
-use repomix_rs::output;
-use repomix_rs::report;
+use rustmix::cli::{self, Cli};
+use rustmix::config::{self, Config};
+use rustmix::core::packager;
+use rustmix::output;
+use rustmix::report;
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -15,7 +15,7 @@ use clap::Parser;
 
 fn main() {
     let process_start = std::time::Instant::now();
-    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
+    let timing = std::env::var_os("RUSTMIX_TIMING").or_else(|| std::env::var_os("REPOMIX_TIMING")).is_some();
     let args: Vec<String> = std::env::args().collect();
     let mut normalized: Vec<String> = vec![args[0].clone()];
     normalized.extend(cli::normalize_optional_value_args(&args[1..]));
@@ -55,7 +55,7 @@ fn read_stdin_paths(cwd: &std::path::Path) -> Result<Vec<PathBuf>> {
     use std::io::{BufRead, IsTerminal};
 
     if std::io::stdin().is_terminal() {
-        bail!("No data provided via stdin. Please pipe file paths to repomix when using --stdin flag.");
+        bail!("No data provided via stdin. Please pipe file paths to rustmix when using --stdin flag.");
     }
 
     let stdin = std::io::stdin();
@@ -92,7 +92,7 @@ fn read_stdin_paths(cwd: &std::path::Path) -> Result<Vec<PathBuf>> {
 }
 
 fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
+    let timing = std::env::var_os("RUSTMIX_TIMING").or_else(|| std::env::var_os("REPOMIX_TIMING")).is_some();
     let t_run = std::time::Instant::now();
 
     // Load the configuration file (if any).
@@ -112,7 +112,7 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
     if cli.quiet {
         // Nothing is printed except errors.
     } else if !cfg.output.stdout {
-        println!("\n\u{1F4E6} Repomix v{}\n", env!("CARGO_PKG_VERSION"));
+        println!("\n\u{1F4E6} Rustmix v{}\n", env!("CARGO_PKG_VERSION"));
     }
 
     // Resolve the target directories.
@@ -236,7 +236,7 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
     //
     // The library API is not affected: `pack()` still returns the result and
     // frees it normally.
-    if std::env::var_os("REPOMIX_TIMING_DROP").is_some() {
+    if std::env::var_os("RUSTMIX_TIMING_DROP").or_else(|| std::env::var_os("REPOMIX_TIMING_DROP")).is_some() {
         let t_drop = std::time::Instant::now();
         drop(result);
         eprintln!(

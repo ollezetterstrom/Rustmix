@@ -103,7 +103,7 @@ impl Default for Config {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             output: OutputConfig {
-                file_path: "repomix-output.txt".to_string(),
+                file_path: "rustmix-output.txt".to_string(),
                 style: OutputStyle::Compact,
                 file_path_style: FilePathStyle::TargetRelative,
                 parsable_style: false,
@@ -227,6 +227,15 @@ pub struct FileTokenCountConfig {
 
 /// Candidate configuration file names, in discovery order.
 pub const CONFIG_FILE_NAMES: &[&str] = &[
+    "rustmix.config.ts",
+    "rustmix.config.mts",
+    "rustmix.config.cts",
+    "rustmix.config.js",
+    "rustmix.config.mjs",
+    "rustmix.config.cjs",
+    "rustmix.config.json5",
+    "rustmix.config.jsonc",
+    "rustmix.config.json",
     "repomix.config.ts",
     "repomix.config.mts",
     "repomix.config.cts",

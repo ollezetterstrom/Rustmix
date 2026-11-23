@@ -1,4 +1,4 @@
-//! Repomix - a high performance, drop-in compatible codebase packer.
+//! Rustmix - an ultra-fast, high-density codebase packer for frontier reasoning models.
 //!
 //! The library exposes the individual pipeline stages so that they can be
 //! reused and tested independently.

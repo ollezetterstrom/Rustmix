@@ -74,6 +74,7 @@ pub const DEFAULT_IGNORE_LIST: &[&str] = &[
     "out/**",
     "tmp/**",
     "temp/**",
+    "**/rustmix-output.*",
     "**/repomix-output.*",
     "**/repopack-output.*",
     "**/package-lock.json",
@@ -105,7 +106,7 @@ pub const DEFAULT_IGNORE_LIST: &[&str] = &[
 ];
 
 /// File names that hold ignore rules.
-const IGNORE_CONTROL_FILE_NAMES: [&str; 3] = [".gitignore", ".ignore", ".repomixignore"];
+const IGNORE_CONTROL_FILE_NAMES: [&str; 4] = [".gitignore", ".ignore", ".rustmixignore", ".repomixignore"];
 
 /// The result of a directory scan.
 #[derive(Debug, Default)]
@@ -310,6 +311,7 @@ pub fn search_files(root: &Path, cfg: &Config) -> Result<SearchOutcome> {
         .parents(true)
         .follow_links(false)
         .same_file_system(false);
+    builder.add_custom_ignore_filename(".rustmixignore");
     builder.add_custom_ignore_filename(".repomixignore");
 
     let matchers_for_filter = Arc::clone(&matchers);
@@ -332,7 +334,7 @@ pub fn search_files(root: &Path, cfg: &Config) -> Result<SearchOutcome> {
     let mut dir_paths: Vec<String> = Vec::new();
 
     // Fine grained instrumentation of the search phase.
-    let timing = std::env::var_os("REPOMIX_TIMING").is_some();
+    let timing = std::env::var_os("RUSTMIX_TIMING").or_else(|| std::env::var_os("REPOMIX_TIMING")).is_some();
     let t_walk = std::time::Instant::now();
     let mut t_match = std::time::Duration::ZERO;
     for entry in builder.build() {
@@ -513,6 +515,7 @@ pub fn list_directories(root: &Path, cfg: &Config) -> Result<Vec<String>> {
         .require_git(false)
         .parents(true)
         .follow_links(false);
+    builder.add_custom_ignore_filename(".rustmixignore");
     builder.add_custom_ignore_filename(".repomixignore");
     let matchers = Arc::new(matchers);
     let m = Arc::clone(&matchers);
@@ -566,6 +569,7 @@ pub fn list_files(root: &Path, cfg: &Config) -> Result<Vec<String>> {
         .require_git(false)
         .parents(true)
         .follow_links(false);
+    builder.add_custom_ignore_filename(".rustmixignore");
     builder.add_custom_ignore_filename(".repomixignore");
     let matchers = Arc::new(matchers);
     let m = Arc::clone(&matchers);

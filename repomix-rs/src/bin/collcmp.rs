@@ -3,7 +3,7 @@
 //!
 //! Usage: collcmp
 
-use repomix_rs::util::path::locale_cmp;
+use rustmix::util::path::locale_cmp;
 
 fn main() {
     let pairs: &[(&str, &str)] = &[

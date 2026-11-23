@@ -64,14 +64,14 @@ fn main() {
         bytes as f64 / 1e6
     );
 
-    let literals = repomix_rs::core::security::rule_literals();
+    let literals = rustmix::core::security::rule_literals();
     println!("literals: {}", literals.len());
 
     // The full scan.
     let t = Instant::now();
     let mut issues = 0usize;
     for (_, s) in &files {
-        issues += repomix_rs::core::security::count_issues(s);
+        issues += rustmix::core::security::count_issues(s);
     }
     let full = t.elapsed();
     println!(
@@ -84,7 +84,7 @@ fn main() {
     let t = Instant::now();
     let mut candidates = 0usize;
     for (_, s) in &files {
-        candidates += repomix_rs::core::security::candidate_rule_count(s);
+        candidates += rustmix::core::security::candidate_rule_count(s);
     }
     let pre = t.elapsed();
     println!(

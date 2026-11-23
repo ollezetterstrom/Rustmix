@@ -1,5 +1,5 @@
 param(
-  [string]$InstallDir = "$env:LOCALAPPDATA\Programs\repomix"
+  [string]$InstallDir = "$env:LOCALAPPDATA\Programs\rustmix"
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,13 +8,13 @@ function Info([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok([string]$m)   { Write-Host "    $m" -ForegroundColor Green }
 function Warn([string]$m) { Write-Host "    $m" -ForegroundColor Yellow }
 
-Info "Installing repomix for Windows (x86_64)..."
+Info "Installing rustmix for Windows (x86_64)..."
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-$targetExe = Join-Path $InstallDir "repomix.exe"
-$zipUrl = "https://github.com/ollezetterstrom/Rustmix/releases/latest/download/repomix-x86_64-pc-windows-msvc.zip"
-$tempZip = Join-Path $env:TEMP "repomix-latest.zip"
-$tempExtract = Join-Path $env:TEMP "repomix-extract-$([System.Guid]::NewGuid().ToString('N'))"
+$targetExe = Join-Path $InstallDir "rustmix.exe"
+$zipUrl = "https://github.com/ollezetterstrom/Rustmix/releases/latest/download/rustmix-x86_64-pc-windows-msvc.zip"
+$tempZip = Join-Path $env:TEMP "rustmix-latest.zip"
+$tempExtract = Join-Path $env:TEMP "rustmix-extract-$([System.Guid]::NewGuid().ToString('N'))"
 
 try {
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -23,9 +23,9 @@ try {
 
   Info "Extracting binary..."
   Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force
-  $foundExe = Get-ChildItem -Path $tempExtract -Filter "repomix.exe" -Recurse | Select-Object -First 1
+  $foundExe = Get-ChildItem -Path $tempExtract -Filter "rustmix.exe" -Recurse | Select-Object -First 1
   if (-not $foundExe) {
-    throw "repomix.exe not found in downloaded release archive."
+    throw "rustmix.exe not found in downloaded release archive."
   }
 
   Copy-Item -LiteralPath $foundExe.FullName -Destination $targetExe -Force
@@ -59,6 +59,6 @@ try {
 }
 
 Write-Host ""
-Write-Host "Done! You can now run repomix from any terminal:" -ForegroundColor Green
-Write-Host "    repomix ."
+Write-Host "Done! You can now run rustmix from any terminal:" -ForegroundColor Green
+Write-Host "    rustmix ."
 Write-Host ""

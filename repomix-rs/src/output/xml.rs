@@ -108,7 +108,7 @@ pub fn render_parsable(ctx: &RenderContext<'_>) -> String {
         &ctx.tree_string,
         ctx.git_diff_work_tree.len() + ctx.git_diff_staged.len(),
     ));
-    out.push_str("<repomix>");
+    out.push_str("<rustmix>");
     if ctx.file_summary_enabled {
         out.push_str("<file_summary>");
         out.push_str(&escape_xml(&ctx.generation_header));
@@ -182,6 +182,6 @@ pub fn render_parsable(ctx: &RenderContext<'_>) -> String {
             out.push_str("</instruction>");
         }
     }
-    out.push_str("</repomix>");
+    out.push_str("</rustmix>");
     out
 }
