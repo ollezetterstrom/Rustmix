@@ -34,19 +34,24 @@ pub fn pack() { ... }
 
 ## ⚡ Installation
 
-### Linux & macOS
+### Homebrew (macOS & Linux — Recommended)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh
+brew install ollezetterstrom/rustmix/rustmix
 ```
 
-### Windows (PowerShell)
+### Windows (PowerShell — Zero dependencies)
 ```powershell
 irm https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.ps1 | iex
 ```
 
+### Linux & macOS (Shell Installer)
+```bash
+curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh
+```
+
 ### Cargo
 ```bash
-cargo install --git https://github.com/ollezetterstrom/Rustmix.git
+cargo install rustmix
 ```
 
 ### Standalone GitHub Releases
