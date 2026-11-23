@@ -21,3 +21,7 @@ repomix-output.*
 
 # The packed repository (regenerate with repomix . -o Rustmix.xml)
 /Rustmix.xml
+
+# Local token reminders / secrets
+token-info.txt
+*token*.txt
