@@ -1,5 +1,6 @@
 ﻿//! Output rendering.
 
+pub mod compact;
 pub mod json;
 pub mod markdown;
 pub mod plain;
@@ -75,6 +76,7 @@ pub fn calculate_markdown_delimiter(contents: &[&str]) -> String {
 /// Render the output in the requested style.
 pub fn render(style: crate::cli::OutputStyle, ctx: &RenderContext<'_>) -> String {
     match style {
+        crate::cli::OutputStyle::Compact => compact::render(ctx),
         crate::cli::OutputStyle::Xml => {
             if ctx.escape_file_content {
                 xml::render_parsable(ctx)
@@ -85,5 +87,20 @@ pub fn render(style: crate::cli::OutputStyle, ctx: &RenderContext<'_>) -> String
         crate::cli::OutputStyle::Markdown => markdown::render(ctx),
         crate::cli::OutputStyle::Json => json::render(ctx),
         crate::cli::OutputStyle::Plain => plain::render(ctx),
+    }
+}
+
+/// Render the output in the requested style directly to a writer.
+pub fn render_to_writer<W: std::io::Write>(
+    style: crate::cli::OutputStyle,
+    ctx: &RenderContext<'_>,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    match style {
+        crate::cli::OutputStyle::Compact => compact::render_to_writer(ctx, writer),
+        _ => {
+            let rendered = render(style, ctx);
+            writer.write_all(rendered.as_bytes())
+        }
     }
 }

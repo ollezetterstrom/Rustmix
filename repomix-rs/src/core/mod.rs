@@ -3,6 +3,7 @@ pub mod comments;
 pub mod compress;
 pub mod decorations;
 pub mod git;
+pub mod indent;
 pub mod metrics;
 pub mod packager;
 pub mod read;

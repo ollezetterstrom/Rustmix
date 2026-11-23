@@ -1,11 +1,11 @@
 [package]
 name = "repomix-rs"
-version = "1.18.1"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.80"
 description = "High-performance drop-in replacement for the Repomix codebase packer, written in Rust"
 license = "MIT"
-repository = "https://github.com/yamadashy/repomix"
+repository = "https://github.com/ollezetterstrom/Rustmix"
 readme = "README.md"
 keywords = ["repomix", "ai", "llm", "packer", "codebase"]
 categories = ["command-line-utilities", "development-tools"]

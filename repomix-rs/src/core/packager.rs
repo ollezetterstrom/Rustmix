@@ -12,7 +12,7 @@ use crate::core::compress;
 use crate::core::decorations;
 use crate::core::git::{self, GitDiffResult, GitLogResult};
 use crate::core::metrics::Metrics;
-use crate::core::read::{self, RawFile, SkipReason};
+use crate::core::read::{self, SkipReason};
 use crate::core::search;
 use crate::core::security::{self, SecurityResult};
 use crate::core::tree;
@@ -50,6 +50,32 @@ struct RootFiles {
     display_paths: Vec<String>,
 }
 
+/// A writer that tracks bytes and characters on the fly.
+pub struct CountingWriter<W> {
+    pub inner: W,
+    pub bytes: usize,
+    pub chars: usize,
+}
+
+impl<W: std::io::Write> CountingWriter<W> {
+    pub fn new(inner: W) -> Self {
+        Self { inner, bytes: 0, chars: 0 }
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for CountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.bytes += n;
+        self.chars += buf[..n].iter().filter(|&&b| (b as i8) >= -0x40).count();
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Pack the given root directories.
 pub fn pack(
     root_dirs: &[PathBuf],
@@ -59,9 +85,9 @@ pub fn pack(
     let timing = std::env::var_os("REPOMIX_TIMING").is_some();
     let t0 = std::time::Instant::now();
 
-    // The tokenizer tables are built lazily; building them takes ~85 ms, so
-    // it is started right away and happens while the files are read.
-    if cfg.need_metrics {
+    // The tokenizer tables are built lazily; building them takes ~85 ms.
+    // When exact token counting is requested, warm it up in the background.
+    if cfg.need_metrics && cfg.exact_tokens {
         crate::core::metrics::warm_up(cfg.token_encoding);
     }
     macro_rules! phase {
@@ -74,15 +100,9 @@ pub fn pack(
 
     progress("Searching for files...");
 
-    // The git change counts are only needed in the sort phase, but computing
-    // them costs a `git log` process spawn. Start it right away so that it
-    // runs while the files are being searched and read.
-    //
-    // The reference implementation only sorts by change count when the
-    // working directory is itself the root of a work tree, and it collects
-    // the counts in the working directory - not in the target directory.
     let sort_by_changes = cfg.output.git.sort_by_changes && git::is_work_tree_root(&cfg.cwd);
-    let change_counts_handle = if sort_by_changes {
+    let need_change_counts = sort_by_changes || cfg.output.smart_compress.is_some();
+    let change_counts_handle = if need_change_counts {
         let dir = cfg.cwd.clone();
         let max_commits = cfg.output.git.sort_by_changes_max_commits;
         Some(std::thread::spawn(move || {
@@ -167,43 +187,6 @@ pub fn pack(
         .flat_map(|r| r.display_paths.clone())
         .collect();
 
-    // --- Collect and read the files -------------------------------------
-    phase!("setup");
-    progress("Collecting files...");
-    let mut raw_files: Vec<RawFile> = Vec::new();
-    let mut skipped_files: Vec<SkippedFile> = Vec::new();
-    for root_files in &root_files {
-        let root = &root_files.root_dir;
-        // The file is read from `root.join(rel)`, but it is recorded with
-        // its *display* path - with several root directories that path is
-        // prefixed with the root label ("alpha/one.txt"), and the reference
-        // implementation uses the display path in the output as well.
-        //
-        // The pairs are collected first: `par_iter().zip()` is not an
-        // *indexed* parallel iterator, and collecting from one does not
-        // preserve the order of the files.
-        let pairs: Vec<(&String, &String)> = root_files
-            .file_paths
-            .iter()
-            .zip(root_files.display_paths.iter())
-            .collect();
-        let collected: Vec<RawFile> = pairs
-            .par_iter()
-            .map(|(rel, display)| read::read_raw_file(&root.join(rel), display, cfg.max_file_size))
-            .collect();
-        for file in collected {
-            match (&file.content, file.skipped) {
-                (Some(_), _) => raw_files.push(file),
-                (None, Some(reason)) => skipped_files.push(SkippedFile {
-                    path: file.path.clone(),
-                    reason,
-                }),
-                (None, None) => {}
-            }
-        }
-    }
-
-    phase!("read");
     // --- Git integration -------------------------------------------------
     let git_diff_result = if cfg.output.git.include_diffs {
         git::get_diffs(root_dirs.first().map(|p| p.as_path()).unwrap_or(Path::new(".")))
@@ -219,134 +202,201 @@ pub fn pack(
         GitLogResult::default()
     };
 
-    // --- Security check --------------------------------------------------
-    let mut suspicious_files: Vec<SecurityResult> = Vec::new();
-    if cfg.security_check_enabled {
-        progress("Running security check...");
-        let results: Vec<SecurityResult> = raw_files
-            .par_iter()
-            .filter_map(|file| {
-                file.content
-                    .as_ref()
-                    .and_then(|c| security::scan_file(&file.path, c))
-            })
-            .collect();
-        suspicious_files = results;    }
+    let (change_counts, top_changed_files): (HashMap<String, usize>, std::collections::HashSet<String>) =
+        if need_change_counts {
+            let counts = change_counts_handle
+                .and_then(|handle| handle.join().ok())
+                .unwrap_or_default();
+            let top_files = if let Some(top_n) = cfg.output.smart_compress {
+                let mut entries: Vec<(&String, &usize)> = counts.iter().collect();
+                entries.sort_by(|a, b| b.1.cmp(a.1));
+                entries.into_iter().take(top_n).map(|(k, _)| k.clone()).collect()
+            } else {
+                std::collections::HashSet::new()
+            };
+            (counts, top_files)
+        } else {
+            (HashMap::new(), std::collections::HashSet::new())
+        };
 
-    let suspicious_paths: std::collections::HashSet<String> =
-        suspicious_files.iter().map(|r| r.file_path.clone()).collect();
+    // --- Fused Pipeline: Read, Security Scan, and Content Processing in one pass ---
+    phase!("setup");
+    progress("Collecting and processing files...");
 
-    phase!("security");
-    // --- Process the content ---------------------------------------------
-    progress("Processing files...");
-    // The content is moved into the processing, not copied: the raw files
-    // are not needed any more, and a copy of the whole repository is the
-    // biggest allocation of a run.
-    let processed = raw_files
+    let mut file_entries: Vec<(PathBuf, String)> = Vec::new();
+    for root_files in &root_files {
+        let root = &root_files.root_dir;
+        for (rel, display) in root_files.file_paths.iter().zip(root_files.display_paths.iter()) {
+            file_entries.push((root.join(rel), display.clone()));
+        }
+    }
+
+    enum FusedResult {
+        Processed(ProcessedFile),
+        Skipped(SkippedFile),
+        Suspicious(SecurityResult),
+        None,
+    }
+
+    let outcomes: Vec<FusedResult> = file_entries
         .into_par_iter()
-        .filter_map(|file| {
-            let content = file.content?;
-            if suspicious_paths.contains(&file.path) {
-                return None;
+        .map(|(full_path, display_path)| {
+            let raw = read::read_raw_file(&full_path, &display_path, cfg.max_file_size);
+            match (raw.content, raw.skipped) {
+                (Some(content), _) => {
+                    if cfg.security_check_enabled {
+                        if let Some(sec) = security::scan_file(&display_path, &content) {
+                            return FusedResult::Suspicious(sec);
+                        }
+                    }
+                    let should_compress = if cfg.output.smart_compress.is_some() {
+                        !top_changed_files.contains(&display_path)
+                    } else {
+                        cfg.output.compress
+                    };
+                    let processed_content = process_content_internal(&display_path, content, cfg, should_compress);
+                    FusedResult::Processed(ProcessedFile {
+                        path: display_path,
+                        content: processed_content,
+                    })
+                }
+                (None, Some(reason)) => FusedResult::Skipped(SkippedFile {
+                    path: display_path,
+                    reason,
+                }),
+                (None, None) => FusedResult::None,
             }
-            let processed_content = process_content(&file.path, content, cfg);
-            Some(ProcessedFile {
-                path: file.path,
-                content: processed_content,
-            })
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    phase!("process");
+    let mut processed: Vec<ProcessedFile> = Vec::with_capacity(outcomes.len());
+    let mut skipped_files: Vec<SkippedFile> = Vec::new();
+    let mut suspicious_files: Vec<SecurityResult> = Vec::new();
+
+    for outcome in outcomes {
+        match outcome {
+            FusedResult::Processed(p) => processed.push(p),
+            FusedResult::Skipped(s) => skipped_files.push(s),
+            FusedResult::Suspicious(sec) => suspicious_files.push(sec),
+            FusedResult::None => {}
+        }
+    }
+
+    phase!("fused_pipeline");
+
     // --- Sort by git change frequency ------------------------------------
-    let mut processed = processed;
     if sort_by_changes {
-        let counts = change_counts_handle
-            .and_then(|handle| handle.join().ok())
-            .unwrap_or_default();
-        processed.sort_by_key(|f| counts.get(&f.path).copied().unwrap_or(0));
+        processed.sort_by_key(|f| change_counts.get(&f.path).copied().unwrap_or(0));
     }
 
     // --- Build the directory tree -----------------------------------------
     let tree_string = build_tree_string(&root_files, &root_labels, &all_file_paths, &empty_dir_paths, cfg);
 
     phase!("sort");
-    // --- Render ------------------------------------------------------------
+    // --- Render & Output Streaming -----------------------------------------
     progress("Generating output...");
     let instruction = load_instruction(cfg)?;
     let ctx = build_render_context(cfg, &processed, &tree_string, &instruction, &git_diff_result, &git_log_result);
 
-    let output = output::render(cfg.output.style, &ctx);
+    let can_stream = cfg.can_stream();
+    let mut output = String::new();
+    let mut output_files = Vec::new();
+
+    let (total_characters, total_bytes) = if can_stream {
+        use std::io::Write;
+        if cfg.output.stdout {
+            let stdout = std::io::stdout();
+            let mut writer = CountingWriter::new(std::io::BufWriter::with_capacity(128 * 1024, stdout.lock()));
+            output::render_to_writer(cfg.output.style, &ctx, &mut writer)?;
+            writer.flush()?;
+            (writer.chars, writer.bytes)
+        } else {
+            let path = resolve_path(&cfg.cwd.join(&cfg.output.file_path));
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let file = std::fs::File::create(&path)?;
+            let mut writer = CountingWriter::new(std::io::BufWriter::with_capacity(128 * 1024, file));
+            output::render_to_writer(cfg.output.style, &ctx, &mut writer)?;
+            writer.flush()?;
+            output_files.push(path);
+            (writer.chars, writer.bytes)
+        }
+    } else {
+        output = output::render(cfg.output.style, &ctx);
+        (output.chars().count(), output.len())
+    };
 
     phase!("render");
     // --- Metrics ------------------------------------------------------------
-    // The token counting phase is by far the most expensive part of a run.
-    // It is only needed for the console report and the `--token-budget`
-    // check, so it can be skipped entirely when neither is active.
     let metrics = if cfg.need_metrics {
         progress("Calculating metrics...");
-        // The per file counts and the output count are independent of each
-        // other, so they are calculated at the same time. The output count
-        // walks over the whole rendered output, the per file counts are
-        // spread over all the threads.
-        let fast_path = crate::core::metrics::can_use_fast_output_token_path(cfg);
-        let (file_metrics, (total_characters, output_tokens)) = rayon::join(
-            || crate::core::metrics::calculate_file_metrics(&processed, cfg.token_encoding),
-            || {
-                let total_characters = crate::core::metrics::utf16_len(&output);
+        if !cfg.exact_tokens {
+            let file_metrics = crate::core::metrics::calculate_file_metrics(
+                &processed,
+                cfg.token_encoding,
+                false,
+            );
+            let total_tokens = crate::core::metrics::estimate_tokens(total_bytes);
+            let git_diff_tokens = crate::core::metrics::estimate_tokens(
+                git_diff_result.work_tree_diff_content.len() + git_diff_result.staged_diff_content.len(),
+            );
+            let git_log_tokens = crate::core::metrics::estimate_tokens(git_log_result.log_content.len());
 
-                // The reference implementation does not tokenize the whole
-                // output again when the fast path is available: it sums the
-                // per-file token counts and adds the tokens of the "wrapper"
-                // (everything that is not file content). This is both much
-                // cheaper and the only way to reproduce the reference token
-                // total exactly - counting the whole output would merge
-                // tokens across the file boundaries.
-                //
-                // The wrapper itself is counted as a whole (the reference
-                // implementation does not split it into chunks), while the
-                // output of the slow path is chunked.
-                let tokens = if fast_path {
-                    match crate::core::metrics::extract_output_wrapper(&output, &processed) {
-                        Some(wrapper) => {
-                            crate::core::metrics::count_tokens(&wrapper, cfg.token_encoding)
-                        }
-                        None => {
-                            crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
-                        }
-                    }
-                } else {
-                    crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
-                };
-                (total_characters, tokens)
-            },
-        );
-
-        // The fast path adds the per file counts to the wrapper count, the
-        // slow path counts the whole output on its own.
-        let total_tokens = if fast_path {
-            file_metrics.iter().map(|m| m.tokens).sum::<usize>() + output_tokens
+            Metrics {
+                total_files: processed.len(),
+                total_characters,
+                total_tokens,
+                file_metrics,
+                git_diff_tokens,
+                git_log_tokens,
+            }
         } else {
-            output_tokens
-        };
+            let fast_path = crate::core::metrics::can_use_fast_output_token_path(cfg);
+            let (file_metrics, (total_chars_exact, output_tokens)) = rayon::join(
+                || crate::core::metrics::calculate_file_metrics(&processed, cfg.token_encoding, true),
+                || {
+                    let total_chars = total_characters;
+                    let tokens = if fast_path {
+                        match crate::core::metrics::extract_output_wrapper(&output, &processed) {
+                            Some(wrapper) => {
+                                crate::core::metrics::count_tokens(&wrapper, cfg.token_encoding)
+                            }
+                            None => {
+                                crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
+                            }
+                        }
+                    } else {
+                        crate::core::metrics::count_tokens_chunked(&output, cfg.token_encoding)
+                    };
+                    (total_chars, tokens)
+                },
+            );
 
-        let git_diff_tokens = crate::core::metrics::count_tokens_chunked(
-            &format!(
-                "{}{}",
-                git_diff_result.work_tree_diff_content, git_diff_result.staged_diff_content
-            ),
-            cfg.token_encoding,
-        );
-        let git_log_tokens =
-            crate::core::metrics::count_tokens_chunked(&git_log_result.log_content, cfg.token_encoding);
+            let total_tokens = if fast_path {
+                file_metrics.iter().map(|m| m.tokens).sum::<usize>() + output_tokens
+            } else {
+                output_tokens
+            };
 
-        Metrics {
-            total_files: processed.len(),
-            total_characters,
-            total_tokens,
-            file_metrics,
-            git_diff_tokens,
-            git_log_tokens,
+            let git_diff_tokens = crate::core::metrics::count_tokens_chunked(
+                &format!(
+                    "{}{}",
+                    git_diff_result.work_tree_diff_content, git_diff_result.staged_diff_content
+                ),
+                cfg.token_encoding,
+            );
+            let git_log_tokens =
+                crate::core::metrics::count_tokens_chunked(&git_log_result.log_content, cfg.token_encoding);
+
+            Metrics {
+                total_files: processed.len(),
+                total_characters: total_chars_exact,
+                total_tokens,
+                file_metrics,
+                git_diff_tokens,
+                git_log_tokens,
+            }
         }
     } else {
         Metrics {
@@ -360,7 +410,7 @@ pub fn pack(
     let git_log_tokens = metrics.git_log_tokens;
     Ok(PackResult {
         output,
-        output_files: Vec::new(),
+        output_files,
         processed_files: processed,
         metrics,
         suspicious_files,
@@ -372,10 +422,11 @@ pub fn pack(
 }
 
 /// Apply the content transformations in Repomix's order.
-///
-/// The content is taken by value and changed in place, so that the normal
-/// case does not allocate a copy of the file.
-pub fn process_content(path: &str, mut content: String, cfg: &Config) -> String {
+pub fn process_content(path: &str, content: String, cfg: &Config) -> String {
+    process_content_internal(path, content, cfg, cfg.output.compress)
+}
+
+pub fn process_content_internal(path: &str, mut content: String, cfg: &Config, should_compress: bool) -> String {
     let ext = extension_of(path);
 
     // 1. Remove comments.
@@ -386,13 +437,13 @@ pub fn process_content(path: &str, mut content: String, cfg: &Config) -> String 
     }
 
     // 2. Compress.
-    if cfg.output.compress {
+    if should_compress {
         if let Some(compressed) = compress::compress_file(path, &content) {
             content = compressed;
         }
     }
 
-    // 3. Truncate base64.
+    // 3. Truncate base64, SVG paths, and lines > 500 chars.
     if cfg.output.truncate_base64 {
         content = crate::core::base64::truncate_base64_content(&content);
     }
@@ -402,10 +453,15 @@ pub fn process_content(path: &str, mut content: String, cfg: &Config) -> String 
         content = comments::remove_empty_lines(&content);
     }
 
-    // 5. Trim.
+    // 5. Convert 4-space leading indentation to tabs.
+    if cfg.output.tab_indent {
+        content = crate::core::indent::convert_indent_to_tabs(&content);
+    }
+
+    // 6. Trim.
     output::style_utils::js_trim_in_place(&mut content);
 
-    // 6. Add line numbers.
+    // 7. Add line numbers.
     if cfg.output.show_line_numbers {
         let lines: Vec<&str> = content.split('\n').collect();
         let padding = lines.len().to_string().len();

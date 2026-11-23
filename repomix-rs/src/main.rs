@@ -167,6 +167,9 @@ fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or
             std::fs::write(&part.file_path, part.content.as_bytes())?;
             output_files.push(part.file_path.clone());
         }
+    } else if !result.output_files.is_empty() || cfg.output.stdout {
+        // Streamed directly to file or stdout during packing
+        output_files = result.output_files.clone();
     } else {
         let t_write = std::time::Instant::now();
         output_files = output::writer::write_output(&cfg, &result.output)?;

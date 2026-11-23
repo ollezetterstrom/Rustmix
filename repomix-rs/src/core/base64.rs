@@ -6,7 +6,7 @@ const TRUNCATION_LENGTH: usize = 32;
 const MIN_CHAR_DIVERSITY: usize = 10;
 const MIN_CHAR_TYPE_COUNT: usize = 3;
 
-/// Truncate long base64 payloads inside a text.
+/// Truncate long base64 payloads, long SVG path data, and minified lines > 500 chars.
 pub fn truncate_base64_content(content: &str) -> String {
     let mut processed = content.to_string();
 
@@ -18,7 +18,93 @@ pub fn truncate_base64_content(content: &str) -> String {
         processed = truncate_standalone(&processed);
     }
 
+    let lower = processed.to_ascii_lowercase();
+    if lower.contains("<path") {
+        processed = truncate_svg_paths(&processed);
+    }
+
+    processed = truncate_long_lines(&processed);
+
     processed
+}
+
+/// Truncate long inline SVG `<path d="...">` data.
+pub fn truncate_svg_paths(content: &str) -> String {
+    let lower = content.to_ascii_lowercase();
+    if !lower.contains("<path") {
+        return content.to_string();
+    }
+
+    let mut out = String::with_capacity(content.len());
+    let mut cursor = 0usize;
+
+    while let Some(path_start) = lower[cursor..].find("<path") {
+        let abs_path_start = cursor + path_start;
+        if let Some(tag_end_rel) = content[abs_path_start..].find('>') {
+            let abs_tag_end = abs_path_start + tag_end_rel + 1;
+            let tag_content = &content[abs_path_start..abs_tag_end];
+
+            let mut replaced_tag = None;
+            for quote in ['"', '\''] {
+                let needle = format!("d={quote}");
+                if let Some(d_start) = tag_content.find(&needle) {
+                    let val_start = d_start + needle.len();
+                    if let Some(val_len) = tag_content[val_start..].find(quote) {
+                        if val_len > 60 {
+                            let val = &tag_content[val_start..val_start + val_len];
+                            let preview: String = val.chars().take(TRUNCATION_LENGTH).collect();
+                            let new_tag = format!(
+                                "{}{preview}...{}",
+                                &tag_content[..val_start],
+                                &tag_content[val_start + val_len..]
+                            );
+                            replaced_tag = Some(new_tag);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            out.push_str(&content[cursor..abs_path_start]);
+            if let Some(new_tag) = replaced_tag {
+                out.push_str(&new_tag);
+            } else {
+                out.push_str(tag_content);
+            }
+            cursor = abs_tag_end;
+        } else {
+            break;
+        }
+    }
+    out.push_str(&content[cursor..]);
+    out
+}
+
+/// Truncate single lines > 500 characters (minified blobs).
+pub fn truncate_long_lines(content: &str) -> String {
+    const MAX_LINE_LEN: usize = 500;
+    if !content.lines().any(|l| l.len() > MAX_LINE_LEN) {
+        return content.to_string();
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut first = true;
+    for line in content.split('\n') {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        if line.len() > MAX_LINE_LEN {
+            let mut end = MAX_LINE_LEN;
+            while end > 0 && !line.is_char_boundary(end) {
+                end -= 1;
+            }
+            out.push_str(&line[..end]);
+            out.push_str("... [truncated]");
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Replace `data:<mime>[;params];base64,<payload>` with a shortened preview.
@@ -239,5 +325,25 @@ mod tests {
         let out = truncate_base64_content(&content);
         assert!(out.ends_with("... suffix"));
         assert!(out.len() < content.len());
+    }
+
+    #[test]
+    fn truncates_long_svg_path_data() {
+        let long_d = "M10 20 L30 40 ".repeat(10);
+        let content = format!("<svg><path fill=\"red\" d=\"{long_d}\" /></svg>");
+        let out = truncate_base64_content(&content);
+        assert!(out.contains("...\""));
+        assert!(out.len() < content.len());
+    }
+
+    #[test]
+    fn truncates_long_lines() {
+        let long_line = "console.log('minified');".repeat(30); // > 500 chars
+        assert!(long_line.len() > 500);
+        let content = format!("line 1\n{long_line}\nline 3");
+        let out = truncate_base64_content(&content);
+        assert!(out.contains("... [truncated]"));
+        assert!(out.starts_with("line 1\n"));
+        assert!(out.ends_with("\nline 3"));
     }
 }

@@ -104,20 +104,21 @@ pub struct Metrics {
     pub git_log_tokens: usize,
 }
 
+/// Fast token estimate from byte count (~3.8 bytes per token).
+#[inline]
+pub fn estimate_tokens(bytes: usize) -> usize {
+    (bytes as f64 / 3.8).round() as usize
+}
+
 /// Compute per-file metrics for the processed files.
 ///
-/// The token count of a file is the count of the *whole* file content - the
-/// reference implementation counts every file as a whole and never splits it
-/// into chunks (only the output itself is chunked, and only when the fast
-/// path is not available).
-///
-/// Identical contents are only counted once. A repository contains a lot of
-/// duplicated files (the same `LICENSE`, the same type declarations), and
-/// hashing all of them would cost more than the counting it saves. The
-/// fingerprint below is `O(1)` per file, and the full contents are only
-/// compared when two files have the same length *and* the same first and
-/// last eight bytes.
-pub fn calculate_file_metrics(files: &[ProcessedFile], encoding: TokenEncoding) -> Vec<FileMetrics> {
+/// If `exact_tokens` is false, tokens are quickly estimated from byte length (`bytes / 3.8`),
+/// avoiding the heavy BPE tokenizer cost.
+pub fn calculate_file_metrics(
+    files: &[ProcessedFile],
+    encoding: TokenEncoding,
+    exact_tokens: bool,
+) -> Vec<FileMetrics> {
     // Group the files by their content.
     let mut groups: Vec<usize> = Vec::with_capacity(files.len());
     let mut file_to_group: Vec<usize> = Vec::with_capacity(files.len());
@@ -143,25 +144,36 @@ pub fn calculate_file_metrics(files: &[ProcessedFile], encoding: TokenEncoding) 
         }
     }
 
-    // Count the unique contents. They are handed to the thread pool from the
-    // largest to the smallest one: a handful of bundled files dominate the
-    // running time, and starting with them keeps every thread busy until the
-    // very end.
+    // Count or estimate the unique contents.
     let mut order: Vec<usize> = (0..groups.len()).collect();
     order.sort_unstable_by_key(|&group| std::cmp::Reverse(files[groups[group]].content.len()));
 
-    let counted: Vec<(usize, usize, usize)> = order
-        .par_iter()
-        .with_max_len(1)
-        .map(|&group| {
-            let content = &files[groups[group]].content;
-            (
-                group,
-                count_tokens(content, encoding),
-                utf16_len(content),
-            )
-        })
-        .collect();
+    let counted: Vec<(usize, usize, usize)> = if exact_tokens {
+        order
+            .par_iter()
+            .with_max_len(1)
+            .map(|&group| {
+                let content = &files[groups[group]].content;
+                (
+                    group,
+                    count_tokens(content, encoding),
+                    char_len(content),
+                )
+            })
+            .collect()
+    } else {
+        order
+            .par_iter()
+            .map(|&group| {
+                let content = &files[groups[group]].content;
+                (
+                    group,
+                    estimate_tokens(content.len()),
+                    char_len(content),
+                )
+            })
+            .collect()
+    };
 
     let mut tokens_of = vec![0usize; groups.len()];
     let mut chars_of = vec![0usize; groups.len()];
@@ -190,7 +202,7 @@ pub fn calculate_file_metrics(files: &[ProcessedFile], encoding: TokenEncoding) 
 /// same fingerprint are very likely identical, but the contents are always
 /// compared in full before they are treated as equal.
 #[inline]
-fn fingerprint(bytes: &[u8]) -> (usize, u64, u64) {
+pub fn fingerprint(bytes: &[u8]) -> (usize, u64, u64) {
     let len = bytes.len();
     if len == 0 {
         return (0, 0, 0);
@@ -208,28 +220,16 @@ fn fingerprint(bytes: &[u8]) -> (usize, u64, u64) {
     (len, head, tail)
 }
 
-/// The length of a string in UTF-16 code units.
-///
-/// The reference implementation is JavaScript, where `String.length` counts
-/// UTF-16 code units - so an emoji outside the basic multilingual plane
-/// counts as two. Counting the Unicode scalar values instead would report a
-/// smaller number for every such character.
-///
-/// The count is derived from the bytes instead of decoding the text: every
-/// byte that is not a continuation byte (`0b10xx_xxxx`) starts a character,
-/// and every four byte sequence is a character outside the basic
-/// multilingual plane, which needs a surrogate pair.
+/// The length of a string in standard characters (Unicode scalar values).
+#[inline]
+pub fn char_len(text: &str) -> usize {
+    text.chars().count()
+}
+
+/// Character length alias for metrics.
+#[inline]
 pub fn utf16_len(text: &str) -> usize {
-    let bytes = text.as_bytes();
-    let mut count = 0usize;
-    for &b in bytes {
-        // `(b as i8) >= -0x40` is true for every byte that is not a
-        // continuation byte, i.e. for every character start.
-        count += ((b as i8) >= -0x40) as usize;
-        // A four byte sequence is a character outside the BMP.
-        count += (b >= 0xF0) as usize;
-    }
-    count
+    char_len(text)
 }
 
 /// Can the total token count be derived from the per-file counts plus the
@@ -330,10 +330,8 @@ mod tests {
         assert!(counts[0] > 0);
     }
 
-    /// The byte based UTF-16 length has to be exactly the number of UTF-16
-    /// code units.
     #[test]
-    fn utf16_len_matches_the_javascript_length() {
+    fn char_len_counts_unicode_scalar_values() {
         let samples = [
             "",
             "hello",
@@ -347,23 +345,10 @@ mod tests {
         ];
         for sample in samples {
             assert_eq!(
-                utf16_len(sample),
-                sample.encode_utf16().count(),
+                char_len(sample),
+                sample.chars().count(),
                 "mismatch for {sample:?}"
             );
-        }
-        // A few random strings as well.
-        let mut state = 0x1234_5678_9abc_def0u64;
-        for _ in 0..200 {
-            let mut text = String::new();
-            for _ in 0..40 {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-                let c = char::from_u32((state >> 32) as u32 % 0x2_0000);
-                if let Some(c) = c {
-                    text.push(c);
-                }
-            }
-            assert_eq!(utf16_len(&text), text.encode_utf16().count());
         }
     }
 
@@ -449,15 +434,21 @@ mod tests {
                 content: "a completely different piece of text".to_string(),
             },
         ];
-        let metrics = calculate_file_metrics(&files, TokenEncoding::O200kBase);
+        let metrics = calculate_file_metrics(&files, TokenEncoding::O200kBase, true);
         assert_eq!(metrics.len(), 3);
         assert_eq!(metrics[0].tokens, metrics[1].tokens);
         assert_eq!(metrics[0].chars, metrics[1].chars);
-        assert_eq!(metrics[0].chars, "hello world".encode_utf16().count());
+        assert_eq!(metrics[0].chars, "hello world".chars().count());
         assert_ne!(metrics[0].tokens, metrics[2].tokens);
         assert_eq!(
             metrics[2].chars,
-            "a completely different piece of text".encode_utf16().count()
+            "a completely different piece of text".chars().count()
         );
+
+        let fast_metrics = calculate_file_metrics(&files, TokenEncoding::O200kBase, false);
+        assert_eq!(fast_metrics.len(), 3);
+        assert_eq!(fast_metrics[0].tokens, fast_metrics[1].tokens);
+        assert_eq!(fast_metrics[0].chars, fast_metrics[1].chars);
+        assert_eq!(fast_metrics[0].tokens, estimate_tokens("hello world".len()));
     }
 }

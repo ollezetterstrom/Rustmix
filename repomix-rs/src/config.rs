@@ -31,6 +31,9 @@ pub struct OutputConfig {
     pub show_line_numbers: bool,
     pub truncate_base64: bool,
     pub copy_to_clipboard: bool,
+    pub exact_tokens: bool,
+    pub smart_compress: Option<usize>,
+    pub tab_indent: bool,
     pub include_empty_directories: Option<bool>,
     pub include_full_directory_structure: bool,
     pub split_output: Option<u64>,
@@ -70,6 +73,7 @@ pub struct Config {
     pub ignore: IgnoreConfig,
     pub security_check_enabled: bool,
     pub token_encoding: TokenEncoding,
+    pub exact_tokens: bool,
     /// Whether the (expensive) token counting phase has to run.
     ///
     /// The metrics are only ever read by the console report and by the
@@ -99,8 +103,8 @@ impl Default for Config {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             output: OutputConfig {
-                file_path: "repomix-output.xml".to_string(),
-                style: OutputStyle::Xml,
+                file_path: "repomix-output.txt".to_string(),
+                style: OutputStyle::Compact,
                 file_path_style: FilePathStyle::TargetRelative,
                 parsable_style: false,
                 header_text: None,
@@ -113,8 +117,11 @@ impl Default for Config {
                 compress: false,
                 top_files_length: 5,
                 show_line_numbers: false,
-                truncate_base64: false,
+                truncate_base64: true,
                 copy_to_clipboard: false,
+                exact_tokens: false,
+                smart_compress: None,
+                tab_indent: true,
                 include_empty_directories: None,
                 include_full_directory_structure: false,
                 split_output: None,
@@ -132,6 +139,7 @@ impl Default for Config {
             },
             security_check_enabled: true,
             token_encoding: TokenEncoding::O200kBase,
+            exact_tokens: false,
             need_metrics: true,
             stdin_file_paths: None,
         }
@@ -528,6 +536,14 @@ impl Config {
         cfg.output.copy_to_clipboard |= cli.copy;
         cfg.token_encoding = cli.token_count_encoding;
 
+        cfg.exact_tokens = cli.exact_tokens || cli.token_budget.is_some() || cli.token_count_tree.is_some();
+        cfg.output.exact_tokens = cfg.exact_tokens;
+        cfg.output.smart_compress = cli.smart_compress;
+        cfg.output.tab_indent = cli.tab_indent || cfg.output.style == OutputStyle::Compact;
+        if cfg.output.style == OutputStyle::Compact {
+            cfg.output.truncate_base64 = true;
+        }
+
         // The default output filename follows the selected style unless the
         // user asked for a specific file.
         if !file_path_explicit {
@@ -536,14 +552,22 @@ impl Config {
 
         cfg
     }
+
+    /// Whether output can be directly streamed to a BufWriter instead of building an in-memory String.
+    #[inline]
+    pub fn can_stream(&self) -> bool {
+        !self.output.copy_to_clipboard && self.output.split_output.is_none() && !self.exact_tokens
+    }
 }
 
 fn parse_style(style: &str) -> OutputStyle {
     match style.to_ascii_lowercase().as_str() {
+        "compact" => OutputStyle::Compact,
         "markdown" | "md" => OutputStyle::Markdown,
         "json" => OutputStyle::Json,
         "plain" | "txt" => OutputStyle::Plain,
-        _ => OutputStyle::Xml,
+        "xml" => OutputStyle::Xml,
+        _ => OutputStyle::Compact,
     }
 }
 

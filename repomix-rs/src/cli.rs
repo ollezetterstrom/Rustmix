@@ -7,6 +7,7 @@ use clap::{Parser, ValueEnum};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputStyle {
+    Compact,
     Xml,
     Markdown,
     Json,
@@ -16,6 +17,7 @@ pub enum OutputStyle {
 impl OutputStyle {
     pub fn as_str(self) -> &'static str {
         match self {
+            OutputStyle::Compact => "compact",
             OutputStyle::Xml => "xml",
             OutputStyle::Markdown => "markdown",
             OutputStyle::Json => "json",
@@ -26,6 +28,7 @@ impl OutputStyle {
     /// Default output filename for this style.
     pub fn default_file_name(self) -> &'static str {
         match self {
+            OutputStyle::Compact => "repomix-output.txt",
             OutputStyle::Xml => "repomix-output.xml",
             OutputStyle::Markdown => "repomix-output.md",
             OutputStyle::Json => "repomix-output.json",
@@ -125,8 +128,8 @@ pub struct Cli {
     #[arg(short = 'o', long, value_name = "file")]
     pub output: Option<String>,
 
-    /// Output format: xml, markdown, json, or plain
-    #[arg(long, value_name = "type", value_enum, default_value = "xml")]
+    /// Output format: compact, xml, markdown, json, or plain
+    #[arg(long, value_name = "type", value_enum, default_value = "compact")]
     pub style: OutputStyle,
 
     /// How file paths are shown in output
@@ -140,6 +143,20 @@ pub struct Cli {
     /// Extract essential code structure using Tree-sitter parsing
     #[arg(long)]
     pub compress: bool,
+
+    /// Keep top N most-frequently-changed files in full while Tree-sitter compressing the rest
+    #[arg(
+        long,
+        value_name = "top_n",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "10"
+    )]
+    pub smart_compress: Option<usize>,
+
+    /// Convert 4-space leading indentation to tabs to reduce tokens
+    #[arg(long)]
+    pub tab_indent: bool,
 
     /// Prefix each line with its line number in the output
     #[arg(long)]
@@ -257,6 +274,10 @@ pub struct Cli {
     #[arg(long, value_name = "encoding", value_enum, default_value = "o200k_base")]
     pub token_count_encoding: TokenEncoding,
 
+    /// Calculate exact token counts using tiktoken instead of fast byte estimate
+    #[arg(long)]
+    pub exact_tokens: bool,
+
     /// Fail with a non-zero exit code when the packed output exceeds N tokens
     #[arg(long, value_name = "number")]
     pub token_budget: Option<u64>,
@@ -269,7 +290,7 @@ pub struct Cli {
 /// when it is attached with `=`. The official help text nevertheless shows
 /// `--token-count-tree 100`, so both spellings are accepted here.
 pub fn normalize_optional_value_args(args: &[String]) -> Vec<String> {
-    const OPTIONAL_VALUE_FLAGS: [&str; 2] = ["--token-count-tree", "--include-logs"];
+    const OPTIONAL_VALUE_FLAGS: [&str; 3] = ["--token-count-tree", "--include-logs", "--smart-compress"];
     let mut out = Vec::with_capacity(args.len());
     let mut i = 0usize;
     while i < args.len() {
@@ -295,13 +316,14 @@ mod tests {
 
     #[test]
     fn normalizes_optional_value_flags() {
-        let args: Vec<String> = ["--token-count-tree", "100", "--include-logs", "10"]
+        let args: Vec<String> = ["--token-count-tree", "100", "--include-logs", "10", "--smart-compress", "5"]
             .iter()
             .map(|s| s.to_string())
             .collect();
         let out = normalize_optional_value_args(&args);
         assert_eq!(out[0], "--token-count-tree=100");
         assert_eq!(out[1], "--include-logs=10");
+        assert_eq!(out[2], "--smart-compress=5");
     }
 
     #[test]
