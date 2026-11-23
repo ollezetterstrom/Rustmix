@@ -27,47 +27,47 @@ pub fn pack() { ... }
 - **Instant Console Reporting:** Defaults to fast byte-based token estimation (`bytes / 3.8`), dropping ~870ms of BPE overhead.
 - **Fused Pipeline & Streaming:** Merges file reading, security checks, and AST processing into a single parallel pass and streams directly to disk via `BufWriter` with minimal memory footprint.
 - **Smart Compression:** Keep your most frequently changed files in full context while Tree-sitter compressing the rest of the repo.
-- **Zero-Dependency One-Command Install:** Cross-platform single binaries for Windows, Linux, and macOS via npm, shell/PowerShell installers, or GitHub Releases.
+- **Zero-Dependency One-Command Install:** Cross-platform standalone binaries for Windows, Linux, and macOS.
+- **Self-Updating:** Keep Rustmix up-to-date anytime by running `rustmix update`.
 
 ---
 
 ## ⚡ Installation
 
-### Instant Run (npm / npx / bunx)
-Run anywhere instantly without manual setup:
-```bash
-npx @ollezetterstrom/rustmix@latest .
-# or with Bun:
-bunx @ollezetterstrom/rustmix@latest .
-```
-
-To install globally for instant 7ms native execution:
-```bash
-npm i -g @ollezetterstrom/rustmix@latest
-```
-
-### Linux & macOS (One-line Shell Installer)
+### Linux & macOS
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh
 ```
 
-### Windows (One-line PowerShell Installer)
+### Windows (PowerShell)
 ```powershell
 irm https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.ps1 | iex
 ```
 
-### GitHub Releases
-Grab the pre-compiled standalone binary for your architecture from [GitHub Releases](https://github.com/ollezetterstrom/Rustmix/releases/latest):
+### Cargo
+```bash
+cargo install --git https://github.com/ollezetterstrom/Rustmix.git
+```
+
+### Standalone GitHub Releases
+Grab the pre-compiled binary for your architecture from [GitHub Releases](https://github.com/ollezetterstrom/Rustmix/releases/latest):
 - `x86_64-pc-windows-msvc` (Statically linked CRT, zero dependencies)
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
 - `aarch64-apple-darwin` (Apple Silicon M-series)
 - `x86_64-apple-darwin` (Intel Mac)
 
-### Cargo
+---
+
+## 🔄 Updating
+
+Once installed, updating Rustmix to the latest release is as simple as:
+
 ```bash
-cargo install --git https://github.com/ollezetterstrom/Rustmix.git --bin rustmix
+rustmix update
 ```
+
+*(Works on Windows, Linux, and macOS — automatically fetches and installs the latest binary release).*
 
 ---
 
@@ -84,6 +84,7 @@ rustmix . --style markdown             # Markdown output
 rustmix . --token-budget 100000        # Error if output exceeds token budget (auto-enables exact tokens)
 rustmix . --include "src/**"           # Include specific globs
 rustmix . --ignore "**/*.test.*"       # Ignore patterns
+rustmix update                         # Update rustmix to latest release
 ```
 
 ---

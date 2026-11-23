@@ -107,6 +107,10 @@ pub struct Cli {
     #[arg(long)]
     pub copy: bool,
 
+    /// Update rustmix to the latest release
+    #[arg(long)]
+    pub update: bool,
+
     /// Show file tree with token counts
     #[arg(
         long,

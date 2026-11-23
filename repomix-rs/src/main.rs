@@ -8,7 +8,7 @@ use rustmix::core::packager;
 use rustmix::output;
 use rustmix::report;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 
 
@@ -91,7 +91,52 @@ fn read_stdin_paths(cwd: &std::path::Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn run(cli: Cli) -> Result<i32> {    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+fn self_update() -> Result<i32> {
+    println!("\u{2728} Updating Rustmix to the latest release...");
+
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.ps1 | iex",
+            ])
+            .status()
+            .context("Failed to run PowerShell update command")?;
+        if status.success() {
+            println!("\u{2705} Rustmix update completed!");
+            Ok(0)
+        } else {
+            bail!("Update failed with exit status: {:?}", status.code());
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let status = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh",
+            ])
+            .status()
+            .context("Failed to run shell update command")?;
+        if status.success() {
+            println!("\u{2705} Rustmix update completed!");
+            Ok(0)
+        } else {
+            bail!("Update failed with exit status: {:?}", status.code());
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<i32> {
+    if cli.update || (cli.directories.len() == 1 && cli.directories[0] == "update") {
+        return self_update();
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let timing = std::env::var_os("RUSTMIX_TIMING").or_else(|| std::env::var_os("REPOMIX_TIMING")).is_some();
     let t_run = std::time::Instant::now();
 
