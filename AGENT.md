@@ -8,7 +8,7 @@
 - **Project Name:** Rustmix (formerly repomix-rs)
 - **Repository:** [https://github.com/ollezetterstrom/Rustmix](https://github.com/ollezetterstrom/Rustmix)
 - **Crate Directory:** `repomix-rs/`
-- **Core Mission:** Ultra-fast, high-density codebase packer for frontier reasoning models (Gemini 2.5 Pro, Claude 3.7 Sonnet, OpenAI o3).
+- **Core Mission:** Ultra-fast, high-density codebase packer for frontier reasoning models and large-context LLMs.
 - **The Pivot (v2.0.0):** The project previously maintained 1:1 bug-for-bug compatibility with JavaScript Repomix. In v2.0.0, we pivoted away from JS parity to achieve:
   1. **Maximum Token Density:** Terse delimiters, BPE whitespace optimization, automatic content deduplication, and minified blob truncation.
   2. **Maximum Raw Speed:** Dropped JS UTF-16 collation, fused pipeline passes into single parallel Rayon scans, and stream buffered output directly to disk.

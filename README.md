@@ -2,7 +2,7 @@
 
 **Ultra-fast, high-density codebase packer for frontier reasoning models.**
 
-Rustmix packs your repository into a token-optimized single file, built for frontier AI models like Gemini 2.5 Pro, Claude 3.7 Sonnet, and OpenAI o3. It delivers **maximum token density** and **blazing speed** by ditching legacy JS overhead, streaming directly to disk, and deduplicating redundant contents.
+Rustmix packs your repository into a token-optimized single file, engineered for frontier reasoning models and large-context LLMs. It delivers **maximum token density** and **blazing speed** by ditching legacy JS overhead, streaming directly to disk, and deduplicating redundant contents.
 
 ```bash
 rustmix .
