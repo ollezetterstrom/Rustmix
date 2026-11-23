@@ -39,14 +39,14 @@ pub fn pack() { ... }
 brew install ollezetterstrom/rustmix/rustmix
 ```
 
-### Windows (PowerShell — Zero dependencies)
+### Windows (PowerShell — Fresh PC, zero dependencies)
 ```powershell
-irm https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.ps1 | iex
+irm olle.gay/Rustmix/install.ps1 | iex
 ```
 
-### Linux & macOS (Shell Installer)
+### Linux & macOS (Shell — Fresh PC, zero dependencies)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh
+curl -sSfL olle.gay/Rustmix/install.sh | sh
 ```
 
 ### Cargo
