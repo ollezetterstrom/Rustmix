@@ -62,14 +62,14 @@ npm enforces mandatory Two-Factor Authentication (2FA) and strict organization s
   brew upgrade rustmix
   ```
 
-### Channel 3: One-Line Installers (Zero Dependencies)
+### Channel 3: One-Line Installers (Zero Dependencies via GitHub Pages / olle.gay)
 - **Linux & macOS:**
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.sh | sh
+  curl -sSfL olle.gay/Rustmix/install.sh | sh
   ```
 - **Windows (PowerShell):**
   ```powershell
-  irm https://raw.githubusercontent.com/ollezetterstrom/Rustmix/main/install.ps1 | iex
+  irm olle.gay/Rustmix/install.ps1 | iex
   ```
 
 ### Channel 4: Built-in Self-Updater
